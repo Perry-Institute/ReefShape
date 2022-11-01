@@ -1,6 +1,31 @@
-# Copies bounding boxes from chunk to other chunks.
-#
-# This is python script for Metashape Pro. Scripts repository: https://github.com/agisoft-llc/metashape-scripts
+"""
+Full Underwater Imagery Workflow
+Sam Marshall
+
+Implements underwater photomosaic workflow developed by Will Greene
+Many of the component scripts were written by Will Greene and Asif-ul Islam
+These were assembled into this full workflow and UI by Sam Marshall
+
+    Usage notes:
+        - The script will only try to import scaling and georeferencing data if there are zero scalebars and will only try to
+        detect markers if there are zero markers, regardless of whether the user has enabled auto-detect markers in the dialog box.
+        This means that if markers and scalebars are added by hand or it takes multiple tries to get it to read the scaling and
+        georeferencing data properly, the remainder of the workflow should execute whether or not the user selects auto-detectable markers.
+        There are ways around this that will still break the script (eg georeferencing by hand without adding scalebars, then running the
+        workflow with auto-detect markers enabled), but in general it should work regardless of how or in what order the user detects markers or
+        scales the model.
+            One notable exception is if the user wishes to have a mix of automatic and hand-placed markers: the script does not support this,
+        but if these steps are done outside of the script it should build the rest of the outputs without issue.
+            
+        - The boundary creation is dependent on the order of the marker placement being correct. For example, if markers 1 - 4 are placed as
+        shown below:
+                    1 ---- 3
+                    |      |
+                    2 ---- 4
+        then the boundary polygon will be in an hourglass shape instead of a box as it should be. If this occurs, you will need to draw the bounding
+        box by hand and run the script again to recreate the outputs.
+"""
+
 
 import Metashape
 from os import path
@@ -28,7 +53,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # add crs options
         self.localCRS = Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
         self.defaultCRS = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]')
-        self.CRS = self.localCRS
+        self.CRS = self.chunk.crs
         self.autoDetectMarkers = False
         
         # initialize main dialog window
@@ -61,7 +86,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # Coordinate System input
         self.labelCRS = QtWidgets.QLabel("Coordinate System:")
         self.btnCRS = QtWidgets.QPushButton("Select CRS")
-        self.btnCRS.setEnabled(False)
         self.txtCRS = QtWidgets.QPlainTextEdit("Local Coordinates")
         self.txtCRS.setFixedHeight(40)
         self.txtCRS.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
@@ -180,6 +204,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def runWorkFlow(self):
         print("Script started...")
+        self.setEnabled(False)
         
         if(not self.autoDetectMarkers):
             Metashape.app.messageBox("Since you are not using auto-detectable markers for scaling and georeferencing, the script will exit after creating a mesh "
@@ -199,9 +224,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # set arguments from dialog box
         project_folder = self.project_folder
         project_name = self.project_name
-        if(self.autoDetectMarkers):    
-            scalebars_path = self.scalebars_path
-            georef_path = self.georef_path
+        try:
+            if(self.autoDetectMarkers):    
+                scalebars_path = self.scalebars_path
+                georef_path = self.georef_path
+        except:
+            print("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information")
+            self.reject()
+            return
+        
         output_dir = self.output_dir
         generic_preselect = self.checkBoxPreSelect.isChecked()
         taglab_outputs = self.checkBoxTagLab.isChecked()
@@ -248,9 +279,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 if(ref_except):
                     print(ref_except)
                     error = error + ref_except
-                go = Metashape.app.getBool(label = "Unable to scale and reference model:\n" + error + "\nWould you like to continue processing the model and scale later?")
+                Metashape.app.messageBox("Unable to scale and reference model:\n" + error + "Check that the files are formatted correctly and try again, or add markers and scalebars through the Metashape GUI.")
                 if(not go):
-                    self.reject()        
+                    self.reject()
+                    return
+            else:
+                CHUNK.updateTransform()
         
         
         if(CHUNK.model == None):
@@ -269,9 +303,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.updateAndSave(DOC)
         
         # if not usin automatic referencing, exit script after mesh creation
-        if(not self.autoDetectMarkers):
+        if(not self.autoDetectMarkers and len(CHUNK.markers) == 0):
             print("Exiting script for manual referencing")
             self.reject()
+            return
         
         # b. build orthomosaic and DEM
         if(CHUNK.orthomosaic == None):
@@ -286,8 +321,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.updateAndSave(DOC)
         
         # c. create boundary
-        self.boundaryCreation(CHUNK)
-        print(" --- Boundary Polygon Created ---")
+        if(not CHUNK.shapes):
+            self.boundaryCreation(CHUNK)
+            print(" --- Boundary Polygon Created ---")
 
 
         ###### 3. Export products ######
@@ -417,8 +453,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
            print(" --- Scalebars Created --- ")
            
        except:
-           #return "There was a problem reading scalebar data"
-           raise Exception("boop")
+           return "There was a problem reading scalebar data\n"
             
 
 
@@ -435,8 +470,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             
         If the project already has georeferencing information, this information will be overwritten.
         '''
-        #     chunk.crs = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]')
-        #     chunk.importReference(path = path, delimiter = ',', columns = "nyxz[XY]Z", skip_rows = 1,crs = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]'))
            
         # set indices for which columns lat/long data is in
         n = 3
@@ -489,8 +522,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                                   crs = _crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
             print(" --- Georeferencing Updated --- ")
         except:
-            # return "There was a problem reading georeferencing data"
-            raise Exception("beep")
+            return "There was a problem reading georeferencing data\n"
         
         
 
@@ -544,11 +576,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         return 1
 
     def boundaryCreation(self, chunk):
-            m_list = []
-            for marker in chunk.markers:
-                    m_list.append(marker)
-            m_list_short = m_list[:4]
-            self.create_shape_from_markers(m_list_short, chunk)
+        m_list = []
+        for marker in chunk.markers:
+            m_list.append(marker)
+        m_list_short = m_list[:4]
+        self.create_shape_from_markers(m_list_short, chunk)
             
 
     def cleanProject(self, chunk):
@@ -568,12 +600,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def getScaleFile(self):
         # maybe change this to local variable and get text value from text box directly when workflow is run?
         # might be better to connect textchanged() signal to a custom function, but more work
-        self.scalebars_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "Text files (*.txt);;CSV files (*.csv)")
-        self.txtScaleFile.setPlainText(self.scalebars_path[0])
+        self.scalebars_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "CSV files (*.csv *.txt)")[0]
+        self.txtScaleFile.setPlainText(self.scalebars_path)
         
     def getGeoFile(self):
-        self.georef_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "Text files (*.txt);;CSV files (*.csv)")
-        self.txtGeoFile.setPlainText(self.georef_path[0])
+        self.georef_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "CSV files (*.csv *.txt)")[0]
+        self.txtGeoFile.setPlainText(self.georef_path)
         
     def getOutputDir(self):
         self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
@@ -598,11 +630,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.txtGeoFile.setEnabled(self.autoDetectMarkers)
         
         if (self.autoDetectMarkers):
-            self.btnCRS.setEnabled(True)
             self.CRS = self.defaultCRS
             self.txtCRS.setPlainText(self.CRS.name)
         else:
-            self.btnCRS.setEnabled(False)
             self.CRS = self.localCRS
             self.txtCRS.setPlainText("Local Coordinates")
 
