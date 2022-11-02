@@ -1,3 +1,7 @@
+# location for this file:
+# Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
+# Mac: /Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts
+
 # script to clean up files that aren't needed for long-term storage
 # written by Will Greene, Perry Institute for Marine Science
 

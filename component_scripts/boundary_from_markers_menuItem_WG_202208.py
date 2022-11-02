@@ -30,7 +30,7 @@ def boundary_creation():
                 coords = [shape_crs.project(T.mulp(marker.position)) for marker in marker_list]
 
                 shape = chunk.shapes.addShape()
-                shape.label = "From markers"
+                shape.label = "Marker Boundary"
                 shape.geometry.type = Metashape.Geometry.Type.PolygonType
                 shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
                 shape.geometry = Metashape.Geometry.Polygon(coords)
