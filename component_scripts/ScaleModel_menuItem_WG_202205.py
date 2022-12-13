@@ -38,8 +38,8 @@ def Create_Scalebars():
    if (iNumScaleBars > 0):
       print('There are already ',iNumScaleBars,' scalebars in this project.')
    
-   cwd = "C:/Users/gsmar/AppData/Local/Agisoft/Metashape Pro/scripts" # change this to dialogue box with user input for combined script
-   file = open(cwd+"/scalebars/UWscalebars.txt", "rt")
+   path = Metashape.app.getOpenFileName("Select input text file:")
+   file = open(path, "rt")
    eof = False
    line = file.readline()
    while not eof:
