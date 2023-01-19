@@ -2,7 +2,7 @@
 Agisoft Metashape scripts for underwater Large Area Imaging
 
 ## Intro
-This is a collection of scripts for use in Agisoft Metashape. Please note that this is still very much a work in progress - if you're accessing this currently, please do not share it widely! If you want to learn more or are having trouble using any of the scripts, email wgreene@perryinstitute.org and I'll get back to you as soon as I can. 
+This is a collection of scripts for use in Agisoft Metashape. Please note that this is still very much a work in progress - if you're accessing this currently, <b> please do not share it widely quite yet! </b> If you want to learn more or are having trouble using any of the scripts, email wgreene@perryinstitute.org and I'll get back to you as soon as I can. 
 
 ## Basics
 This repo is set up with a root folder that contains the resources you need to get the different scripts to work. 
