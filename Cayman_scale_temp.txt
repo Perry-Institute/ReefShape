@@ -1,4 +1,0 @@
-target 49,target 50,0.4975,0.0005
-target 51,target 52,0.4975,0.0005
-target 53,target 54,0.4975,0.0005
-target 115,target 116,0.4975,0.0005
