@@ -19,11 +19,11 @@ Mac: /Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/sc
 
 There are also three other folders in the repo:
 
-<b> batch_processing <b/> This contains Metashape .xml files that can be loaded into the batch processing dialog in Metashape to carry out various tasks. They are probably not useful to you, the user.
+<b> batch_processing </b> This contains Metashape .xml files that can be loaded into the batch processing dialog in Metashape to carry out various tasks. They are probably not useful to you, the user.
 
-<b> batch_scripts <b/> This contains a set of python scripts that can execute specific functions useful to be included in a batch processing dialog. They can be installed anywhere that you can easily find them, and in a batch process, you can use the run script... command as a batch function, and then select the file for the desired action (E.g. OptimizationProcess script is useful to run after running Align Photos...). 
+<b> batch_scripts </b> This contains a set of python scripts that can execute specific functions useful to be included in a batch processing dialog. They can be installed anywhere that you can easily find them, and in a batch process, you can use the run script... command as a batch function, and then select the file for the desired action (E.g. OptimizationProcess script is useful to run after running Align Photos...). 
 
-<b> component_scripts<b/> This folder has similar python scripts to the batch_scripts folder, but formatted as menu bar items so that they can be used normally in the GUI. These scripts should be installed in the same location as the Full_UW_Dialog script:
+<b> component_scripts </b> This folder has similar python scripts to the batch_scripts folder, but formatted as menu bar items so that they can be used normally in the GUI. These scripts should be installed in the same location as the Full_UW_Dialog script:
 
 Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
 
