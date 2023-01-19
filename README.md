@@ -1,5 +1,5 @@
 # Metashape_Reef
-Agisoft Metashape scripts for underwater Large Area Imaging
+Agisoft Metashape scripts for underwater Large Area Imaging. Note: all scripts are tested to work with Metashape 1.8.4, and have not been updated to work with the latest Metashape 2.0 release. I know there is some incompatibility so don't bother trying yet!
 
 ## Intro
 This is a collection of scripts for use in Agisoft Metashape. Please note that this is still very much a work in progress - if you're accessing this currently, <b> please do not share it widely quite yet! </b> If you want to learn more or are having trouble using any of the scripts, email wgreene@perryinstitute.org and I'll get back to you as soon as I can. 
