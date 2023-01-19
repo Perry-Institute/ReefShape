@@ -10,6 +10,7 @@ This repo is set up with a root folder that contains the resources you need to g
 <b>Full_UW_dialog... .py</b> This file is the main script that can run the entire process start to finish. You simply open Metashape, import your photos, save the project as the site name, and then rename the chunk containing the photos to the current date in numeric yyyymmdd format (20230119 would be Jan 19, 2023). This script can be run by clicking on Tools --> Run Script... in Metashape, which will create a custom menu button that has the script inside it. When you click on it, it will bring up a dialog box where you can input a georeference file, scalebar file, and a few other basic options. This will be expanded and made more comprehensive as we go. A better way to run the script is to install it where Metashape will execute / add the custom menu button every time you open the program. The correct location for the file varies on Mac vs PC:
 
 Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
+
 Mac: /Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts
 
 <b>Scalebar Example.txt</b> This file is an example text file that contains the scale bar lengths. The idea is that you have a scalebar with metashape targets at either end. You measure the distance between the centerpoints of the targets, then add a line in a text file that corresponds to that scalebar. Each time this scalebar is detected in a project, its distance will be input into Metashape's reference panel. See text file for the correct formatting.
@@ -25,6 +26,7 @@ There are also three other folders in the repo:
 <b> component_scripts<b/> This folder has similar python scripts to the batch_scripts folder, but formatted as menu bar items so that they can be used normally in the GUI. These scripts should be installed in the same location as the Full_UW_Dialog script:
 
 Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
+
 Mac: /Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts
 
 That's all for now! I hope these scripts are useful to your coral photogrammetry projects!
