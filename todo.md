@@ -1,15 +1,17 @@
+# Change Log and Feature List
 
-To Add:
+## Full Underwater Workflow script
 
-To think about:
-- TODO: is there a way to draw bounding box when order of targets is messed up?
-- deal with case of not using automatic scaling and/or georeferencing:
+Desired Features:
+- draw bounding box correctly when order of targets is incorrect
+- refine behavior when not using automatic scaling and/or georeferencing:
     - maybe have it run through the whole workflow and then user can scale it later
-    - or maybe (probably better)[but maybe not?] exit after aligning, have the user scale and check it, then continue - ask will how well this would work with method of only collecting depths
-- is there a way to avoid problem of model getting flipped when only using depths? set marker norm?
-- allow user to choose target type for scaling? or choose between a couple methods of scaling/georeferencing?
-- develop a full dialog box ui like for align model to model script?
+    - maybe exit after aligning, have the user scale and check it, then continue
+- solve problem of model getting flipped when only using depths - set marker norm?
+- allow user to choose target type for scaling, or choose between a couple methods of scaling/georeferencing
+- include an option to add photos and/or name the project and chunk from within the dialog box
+- add feature or create a separate script to align chunks from two different time points to one another
 
-Tests:
-- run on small test plot with and without automatic markers enabled
-- run with incorrect/mixed up scaling/georef data - prints error message and exits as it should
+Known Problems:
+- output sizes can be unnecessarily large, especially when producing duplicate outputs for use in TagLab
+- potential 'CUDA out of memory' error, likely fixed by updating GPU drivers
