@@ -7,26 +7,27 @@
 
 # updated May 2022 by Will Greene / Perry Institute for Marine Science and
 # Asif-ul Islam / Middlebury College for use with underwater photogrammetry
+# updated Jan 2023 by Sam Marshall to reflect changes in API for Metashape 2.0.0
 
 import Metashape
 
 def gradSelectsOptimization():
-    
+
     doc = Metashape.app.document
     chunk = doc.chunk
-    
+
 # define thresholds for reconstruction uncertainty and projection accuracy
     reconun = float(25)
     projecac = float(15)
-    
+
 # initiate filters, remote points above thresholds
-    f = Metashape.PointCloud.Filter()
-    f.init(chunk, Metashape.PointCloud.Filter.ReconstructionUncertainty)
+    f = Metashape.TiePoints.Filter()
+    f.init(chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
     f.removePoints(reconun)
-    
-    f = Metashape.PointCloud.Filter()
-    f.init(chunk, Metashape.PointCloud.Filter.ProjectionAccuracy)
-    f.removePoints(projecac)    
+
+    f = Metashape.TiePoints.Filter()
+    f.init(chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
+    f.removePoints(projecac)
 
 # optimize camera locations based on all distortion parameters
     chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True,
@@ -37,6 +38,6 @@ def gradSelectsOptimization():
 
     Metashape.app.update()
     print("Script finished")
-    
+
 label = "Custom/Optimize Cameras and Model"
 Metashape.app.addMenuItem(label, gradSelectsOptimization)

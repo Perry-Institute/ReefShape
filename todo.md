@@ -11,6 +11,7 @@ Desired Features:
 - allow user to choose target type for scaling, or choose between a couple methods of scaling/georeferencing
 - include an option to add photos and/or name the project and chunk from within the dialog box
 - add feature or create a separate script to align chunks from two different time points to one another
+- emulate metashape's 'import scale info' dialog box so that the user can specify which columns the relevant info is in
 
 Known Problems:
 - output sizes can be unnecessarily large, especially when producing duplicate outputs for use in TagLab
