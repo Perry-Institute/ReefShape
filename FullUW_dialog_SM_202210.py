@@ -33,6 +33,8 @@ import sys
 import csv
 from PySide2 import QtGui, QtCore, QtWidgets
 
+import ReferenceFormat_dialog_SM_202301 as reference
+
 # Checking compatibility
 compatible_major_version = "2.0"
 found_major_version = ".".join(Metashape.app.version.split('.')[:2])
@@ -43,6 +45,7 @@ if found_major_version != compatible_major_version:
 class FullWorkflowDlg(QtWidgets.QDialog):
 
     def __init__(self, parent):
+
         # set document info
         self.doc = Metashape.app.document
         self.chunk = self.doc.chunk
@@ -61,28 +64,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.setWindowTitle("Run Underwater Workflow")
 
         # --- Build Widgets ---
-        # file input for scalebars
-        self.labelScaleFile = QtWidgets.QLabel("Scalebar File:")
-        self.labelScaleFile.setEnabled(False)
-        self.btnScaleFile = QtWidgets.QPushButton("Select File")
-        self.btnScaleFile.setEnabled(False)
-        self.txtScaleFile = QtWidgets.QPlainTextEdit("No file selected")
-        self.txtScaleFile.setEnabled(False)
-        self.txtScaleFile.setFixedHeight(40)
-        self.txtScaleFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtScaleFile.setReadOnly(True)
-
-        # file input for georeferencing
-        self.labelGeoFile = QtWidgets.QLabel("Georeferencing File:")
-        self.labelGeoFile.setEnabled(False)
-        self.btnGeoFile = QtWidgets.QPushButton("Select File")
-        self.btnGeoFile.setEnabled(False)
-        self.txtGeoFile = QtWidgets.QPlainTextEdit("No file selected")
-        self.txtGeoFile.setEnabled(False)
-        self.txtGeoFile.setFixedHeight(40)
-        self.txtGeoFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtGeoFile.setReadOnly(True)
-
+        # -- General --
         # Coordinate System input
         self.labelCRS = QtWidgets.QLabel("Coordinate System:")
         self.btnCRS = QtWidgets.QPushButton("Select CRS")
@@ -90,14 +72,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.txtCRS.setFixedHeight(40)
         self.txtCRS.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtCRS.setReadOnly(True)
-
-        # directory input for exports
-        self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
-        self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
-        self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
-        self.txtOutputDir.setFixedHeight(40)
-        self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtOutputDir.setReadOnly(True)
 
         # generic preselection
         self.checkBoxPreSelect = QtWidgets.QCheckBox("Enable Generic Preselection")
@@ -109,6 +83,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.checkBoxTagLab.setChecked(True)
         self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
                                        "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
+
+        # directory input for exports
+        self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
+        self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
+        self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtOutputDir.setFixedHeight(40)
+        self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtOutputDir.setReadOnly(True)
+
+        # -- Georeferencing --
 
         # scaling/georeferencing type
         self.labelReference = QtWidgets.QLabel("Are you using auto-detectable markers for scaling and georeferencing?")
@@ -132,6 +116,58 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         for target_type in self.targetTypes:
             self.comboTargetType.addItem(target_type[0])
 
+
+        # file input for scalebars
+        self.labelScaleFile = QtWidgets.QLabel("Scalebar File:")
+        self.labelScaleFile.setEnabled(False)
+        self.btnScaleFile = QtWidgets.QPushButton("Select File")
+        self.btnScaleFile.setEnabled(False)
+        self.txtScaleFile = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtScaleFile.setEnabled(False)
+        self.txtScaleFile.setFixedHeight(40)
+        self.txtScaleFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtScaleFile.setReadOnly(True)
+
+        # file input for georeferencing
+        self.labelGeoFile = QtWidgets.QLabel("Georeferencing File:")
+        self.labelGeoFile.setEnabled(False)
+        self.btnGeoFile = QtWidgets.QPushButton("Select File")
+        self.btnGeoFile.setEnabled(False)
+        self.txtGeoFile = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtGeoFile.setEnabled(False)
+        self.txtGeoFile.setFixedHeight(40)
+        self.txtGeoFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtGeoFile.setReadOnly(True)
+
+        # add in spinbox widgets to define georeferencing format
+        self.labelRefLabel = QtWidgets.QLabel("Label:")
+        self.spinboxRefLabel = QtWidgets.QSpinBox()
+        self.spinboxRefLabel.setMinimum(1)
+
+        self.labelRefX = QtWidgets.QLabel("X:")
+        self.spinboxRefX = QtWidgets.QSpinBox()
+        self.spinboxRefX.setMinimum(1)
+
+        self.labelRefY = QtWidgets.QLabel("Y:")
+        self.spinboxRefY = QtWidgets.QSpinBox()
+        self.spinboxRefY.setMinimum(1)
+
+        self.labelRefZ = QtWidgets.QLabel("Z:")
+        self.spinboxRefZ = QtWidgets.QSpinBox()
+        self.spinboxRefZ.setMinimum(1)
+
+        self.labelAccuracy = QtWidgets.QLabel("Accuracy")
+        self.spinboxXAcc = QtWidgets.QSpinBox()
+        self.spinboxXAcc.setMinimum(1)
+        self.spinboxYAcc = QtWidgets.QSpinBox()
+        self.spinboxYAcc.setMinimum(1)
+        self.spinboxZAcc = QtWidgets.QSpinBox()
+        self.spinboxZAcc.setMinimum(1)
+
+        self.labelSkipRows = QtWidgets.QLabel("Start import at row:")
+        self.spinboxSkipRows = QtWidgets.QSpinBox()
+        self.spinboxSkipRows.setMinimum(1)
+
         # run script button
         self.btnOk = QtWidgets.QPushButton("Ok")
         self.btnOk.setFixedSize(90, 50)
@@ -143,6 +179,27 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # --- Assemble widgets into layouts ---
         main_layout = QtWidgets.QVBoxLayout()  # create main layout - this will hold sublayouts containing individual widgets
+
+        # -- Create sublayouts --
+        crs_layout = QtWidgets.QHBoxLayout()
+        crs_layout.addWidget(self.labelCRS)
+        crs_layout.addWidget(self.txtCRS)
+        crs_layout.addWidget(self.btnCRS)
+
+        checkbox_layout = QtWidgets.QHBoxLayout()
+        checkbox_layout.addWidget(self.checkBoxPreSelect)
+        checkbox_layout.addWidget(self.checkBoxTagLab)
+
+        output_layout = QtWidgets.QHBoxLayout()
+        output_layout.addWidget(self.labelOutputDir)
+        output_layout.addWidget(self.txtOutputDir)
+        output_layout.addWidget(self.btnOutputDir)
+
+        autodetect_layout = QtWidgets.QHBoxLayout()
+        autodetect_layout.addWidget(self.labelReference)
+        autodetect_layout.addWidget(self.comboReference)
+        autodetect_layout.addWidget(self.comboTargetType)
+
         scale_layout = QtWidgets.QHBoxLayout()
         scale_layout.addWidget(self.labelScaleFile)
         scale_layout.addWidget(self.txtScaleFile)
@@ -153,37 +210,70 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         geo_layout.addWidget(self.txtGeoFile)
         geo_layout.addWidget(self.btnGeoFile)
 
-        crs_layout = QtWidgets.QHBoxLayout()
-        crs_layout.addWidget(self.labelCRS)
-        crs_layout.addWidget(self.txtCRS)
-        crs_layout.addWidget(self.btnCRS)
+        ref_format_layout = QtWidgets.QGridLayout()
+        ref_format_layout.setColumnStretch(0, 1)
+        ref_format_layout.setColumnStretch(1, 10)
+        ref_format_layout.setColumnStretch(2, 10)
+        ref_format_layout.addWidget(self.labelRefLabel, 0, 0)
+        ref_format_layout.addWidget(self.spinboxRefLabel, 0, 1)
+        ref_format_layout.addWidget(self.labelAccuracy, 0, 2)
 
-        output_layout = QtWidgets.QHBoxLayout()
-        output_layout.addWidget(self.labelOutputDir)
-        output_layout.addWidget(self.txtOutputDir)
-        output_layout.addWidget(self.btnOutputDir)
+        ref_format_layout.addWidget(self.labelRefX, 1, 0)
+        ref_format_layout.addWidget(self.spinboxRefX, 1, 1)
+        ref_format_layout.addWidget(self.spinboxXAcc, 1, 2)
 
-        reference_layout = QtWidgets.QHBoxLayout()
-        reference_layout.addWidget(self.labelReference)
-        reference_layout.addWidget(self.comboReference)
-        reference_layout.addWidget(self.comboTargetType)
+        ref_format_layout.addWidget(self.labelRefY, 2, 0)
+        ref_format_layout.addWidget(self.spinboxRefY, 2, 1)
+        ref_format_layout.addWidget(self.spinboxYAcc, 2, 2)
 
-        checkbox_layout = QtWidgets.QHBoxLayout()
-        checkbox_layout.addWidget(self.checkBoxPreSelect)
-        checkbox_layout.addWidget(self.checkBoxTagLab)
+        ref_format_layout.addWidget(self.labelRefZ, 3, 0)
+        ref_format_layout.addWidget(self.spinboxRefZ, 3, 1)
+        ref_format_layout.addWidget(self.spinboxZAcc, 3, 2)
+
+        skip_rows_layout = QtWidgets.QHBoxLayout()
+        skip_rows_layout.addWidget(self.labelSkipRows)
+        skip_rows_layout.addWidget(self.spinboxSkipRows)
+        ref_format_layout.addLayout(skip_rows_layout, 4, 0, 1, 2)
+
+        self.ref_format_groupbox = QtWidgets.QGroupBox("Column Formatting")
+        self.ref_format_groupbox.setLayout(ref_format_layout)
+        self.ref_format_groupbox.setEnabled(False)
 
         ok_layout = QtWidgets.QHBoxLayout()
         ok_layout.addWidget(self.btnOk)
         ok_layout.addWidget(self.btnQuit)
 
 
-        main_layout.addLayout(reference_layout)
-        main_layout.addLayout(scale_layout)
-        main_layout.addLayout(geo_layout)
-        main_layout.addLayout(crs_layout)
-        main_layout.addLayout(checkbox_layout)
-        main_layout.addLayout(output_layout)
+        # -- Assemble sublayouts into groupboxes --
+        general_groupbox = QtWidgets.QGroupBox("General")
+        general_layout = QtWidgets.QVBoxLayout()
+        general_layout.addLayout(crs_layout)
+        general_layout.addLayout(checkbox_layout)
+        general_layout.addLayout(output_layout)
+        general_groupbox.setLayout(general_layout)
+
+        reference_groupbox = QtWidgets.QGroupBox("Georeferencing")
+        reference_layout = QtWidgets.QVBoxLayout()
+        reference_layout.addLayout(autodetect_layout)
+        reference_layout.addLayout(scale_layout)
+        reference_layout.addLayout(geo_layout)
+        reference_layout.addWidget(self.ref_format_groupbox)
+        reference_groupbox.setLayout(reference_layout)
+
+        # -- Assemble groupboxes into main layout --
+        main_layout.addWidget(general_groupbox)
+        main_layout.addWidget(reference_groupbox)
         main_layout.addLayout(ok_layout)
+
+        # old format
+        # main_layout.addLayout(reference_layout)
+        # main_layout.addLayout(scale_layout)
+        # main_layout.addLayout(geo_layout)
+        # main_layout.addWidget(ref_format_groupbox)
+        # main_layout.addLayout(crs_layout)
+        # main_layout.addLayout(checkbox_layout)
+        # main_layout.addLayout(output_layout)
+        # main_layout.addLayout(ok_layout)
 
         self.setLayout(main_layout)
 
@@ -218,7 +308,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
         DM_QUALITY = 4 # quality setting for depth maps; corresponds to medium in GUI
         ORTHO_RES = 0.0005 # cell size in meters for orthomosaic
-        TARGET_TYPE = Metashape.CircularTarget12bit # marker target type - could become input in later version
         INTERPOLATION = Metashape.DisabledInterpolation # interpolation setting for DEM creation
 
         # set arguments from dialog box
@@ -229,15 +318,23 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 scalebars_path = self.scalebars_path
                 georef_path = self.georef_path
         except:
-            print("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information")
+            print("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information" +
+                    "\nScript aborted")
             self.reject()
             return
 
         output_dir = self.output_dir
         generic_preselect = self.checkBoxPreSelect.isChecked()
         taglab_outputs = self.checkBoxTagLab.isChecked()
-        CRS = self.CRS
 
+        target_type_index = self.comboTargetType.currentIndex()
+        target_type = self.targetTypes[target_type_index][1]
+
+        ref_formatting = [self.spinboxRefLabel.value(), self.spinboxRefX.value(), self.spinboxRefY.value(), self.spinboxRefZ.value(),
+                            self.spinboxXAcc.value(), self.spinboxYAcc.value(), self.spinboxZAcc.value(), self.spinboxSkipRows.value()]
+
+        print(ref_formatting)
+        CRS = self.CRS
         CHUNK.crs = CRS
 
 #         print(project_folder)
@@ -263,13 +360,13 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # b. detect markers
         if(len(CHUNK.markers) == 0 and self.autoDetectMarkers): # detects markers only if there are none to start with - could change to threshold # of markers there should be, but i think makes most sense to leave as-is
-            CHUNK.detectMarkers(target_type = TARGET_TYPE, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
+            CHUNK.detectMarkers(target_type = target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
             print(" --- Markers Detected --- ")
 
         # c. scale model
         if(len(CHUNK.scalebars) == 0 and self.autoDetectMarkers): # creates scalebars only if there are none already - ask Will if this makes sense
             scale_except = self.createScalebars(CHUNK, scalebars_path)
-            ref_except = self.referenceModel(CHUNK, georef_path, CRS)
+            ref_except = self.referenceModel(CHUNK, georef_path, CRS, ref_formatting)
             # this structure is really clunky but I'm not sure what the best way to differentiate between sub-exceptions is without defining whole exception classes, which seems excessiv
             error = ""
             if(scale_except or ref_except):
@@ -285,6 +382,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                     return
             else:
                 CHUNK.updateTransform()
+
 
 
         if(CHUNK.model == None):
@@ -459,7 +557,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
 
-    def referenceModel(self, chunk, path, _crs):
+    def referenceModel(self, chunk, path, _crs, formatting):
         '''
         Imports marker georeferencing data from a csv
         The file must be formatted in one of two ways, either with marker coordinate and accuracy info located in the column numbers specified below
@@ -473,13 +571,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         If the project already has georeferencing information, this information will be overwritten.
         '''
 
+
         # set indices for which columns lat/long data is in
-        n = 3
-        x = 5
-        y = 4
-        z = 6
-        XY = 7
-        Z = 8
+        n = formatting[0] - 1
+        x = formatting[1] - 1
+        y = formatting[2] - 1
+        z = formatting[3] - 1
+        X = formatting[4] - 1
+        Y = formatting[5] - 1
+        Z = formatting[6] - 1
+        skip = formatting[7] - 1
 
         try:
             # create file path for reformatted georeferencing data
@@ -492,35 +593,35 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             line = file.readline()
             line = file.readline() # read second line in file, first line is column headers
 
-            if(len(line.split(sep = ",")) == 6):
-                print("File is formatted correctly")
-                new_path = path
+            # if(len(line.split(sep = ",")) == 6):
+            #     print("File is formatted correctly")
+            #     new_path = path
 
-            elif(len(line.split(sep = ",")) >= 8):
-                while not eof:
-                    marker_ref = line.split(sep = ",")
-                    ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[XY], marker_ref[Z]]
-                    #print(ref_line)
-                    if(not len(ref)):
-                        ref = [ref_line]
-                    elif(len(ref) > 0):
-                        ref.append(ref_line)
+            # elif(len(line.split(sep = ",")) >= 8):
+            while not eof:
+                marker_ref = line.split(sep = ",")
+                ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[X], marker_ref[Y], marker_ref[Z]]
+                #print(ref_line)
+                if(not len(ref)):
+                    ref = [ref_line]
+                elif(len(ref) > 0):
+                    ref.append(ref_line)
 
-                    line = file.readline()
-                    if not len(line):
-                         eof = True
-                         break
-                file.close()
+                line = file.readline()
+                if not len(line):
+                     eof = True
+                     break
+            file.close()
 
-                header = ["label", "x", "y", "z", "XY_acc", "Z_acc"]
-                # write cleaned georeferencing data to a new file
-                with open(new_path, 'w', newline = '') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(header)
-                    writer.writerows(ref)
+            header = ["label", "x", "y", "z", "X_acc", "Y_acc", "Z_acc"]
+            # write cleaned georeferencing data to a new file
+            with open(new_path, 'w', newline = '') as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                writer.writerows(ref)
 
             # import new georeferencing data
-            chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyz[XY]Z", skip_rows = 1,
+            chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
                                   crs = _crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
             print(" --- Georeferencing Updated --- ")
         except:
@@ -602,6 +703,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def getScaleFile(self):
         # maybe change this to local variable and get text value from text box directly when workflow is run?
         # might be better to connect textchanged() signal to a custom function, but more work
+
         self.scalebars_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "CSV files (*.csv *.txt)")[0]
         if(self.scalebars_path):
             self.txtScaleFile.setPlainText(self.scalebars_path)
@@ -627,6 +729,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def onReferenceChanged(self):
         self.autoDetectMarkers = self.comboReference.currentIndex()
+        self.ref_format_groupbox.setEnabled(self.autoDetectMarkers)
+
         self.comboTargetType.setEnabled(self.autoDetectMarkers)
 
         self.labelScaleFile.setEnabled(self.autoDetectMarkers)
