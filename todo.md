@@ -24,3 +24,5 @@ Code Quality:
 
 Testing:
 - test georeferencing formatting
+- test starting code with photos already added
+  - should work fine, but might be good to add a note somewhere outlining the behavior in that circumstance
