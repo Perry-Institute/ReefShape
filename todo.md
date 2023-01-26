@@ -9,10 +9,18 @@ Desired Features:
     - maybe exit after aligning, have the user scale and check it, then continue
 - solve problem of model getting flipped when only using depths - set marker norm?
 - allow user to choose target type for scaling, or choose between a couple methods of scaling/georeferencing
-- include an option to add photos and/or name the project and chunk from within the dialog box
 - add feature or create a separate script to align chunks from two different time points to one another
 - emulate metashape's 'import scale info' dialog box so that the user can specify which columns the relevant info is in
+  - potentially add a table view so that the user can preview the columns that they are assigning to each variable
 
 Known Problems:
 - output sizes can be unnecessarily large, especially when producing duplicate outputs for use in TagLab
 - potential 'CUDA out of memory' error, likely fixed by updating GPU drivers
+
+Code Quality:
+- add documentation comments to each function
+- edit existing comments and add comments where needed
+- potentially refactor dialog box - break component groupboxes into separate classes
+
+Testing:
+- test georeferencing formatting

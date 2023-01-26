@@ -31,15 +31,174 @@ import Metashape
 from os import path
 import sys
 import csv
-from PySide2 import QtGui, QtCore, QtWidgets
+import re
+from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 
-import ReferenceFormat_dialog_SM_202301 as reference
 
 # Checking compatibility
 compatible_major_version = "2.0"
 found_major_version = ".".join(Metashape.app.version.split('.')[:2])
 if found_major_version != compatible_major_version:
     raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
+
+
+class AddPhotosGroupBox(QtWidgets.QGroupBox):
+    def __init__(self, parent):
+        # call parent constructor to initialize
+        super().__init__("Project Setup")
+        self.parent = parent
+        self.chunk_name = parent.chunk.label
+        self.project_path = ""
+
+        self.labelAddPhotos = QtWidgets.QLabel("Add photos:")
+        self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
+        self.txtAddPhotos = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtAddPhotos.setFixedHeight(40)
+        self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtAddPhotos.setReadOnly(True)
+
+        # text input for file name and chunk name
+        self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
+                                                        "using the AGRRA site code\nas the project name and the date the data "
+                                                        "was collected (in YYYYMMDD format) as the chunk name.")
+        self.labelNamingConventions.setAlignment(QtCore.Qt.AlignCenter)
+        self.labelProjectName = QtWidgets.QLabel("Project Name:")
+        self.btnProjectName = QtWidgets.QPushButton("Select File")
+        self.txtProjectName = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtProjectName.setFixedHeight(40)
+        self.txtProjectName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtProjectName.setReadOnly(True)
+
+        self.labelChunkName = QtWidgets.QLabel("Chunk Name:")
+        self.btnChunkName = QtWidgets.QPushButton("Create Chunk")
+        self.txtChunkName = QtWidgets.QPlainTextEdit("Chunk 1")
+        self.txtChunkName.setFixedHeight(40)
+        self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+
+        self.btnCreateProj = QtWidgets.QPushButton("Create Project")
+        self.btnCreateProj.setFixedWidth(90)
+
+        # -- create layouts and assemble widgets --
+        main_layout = QtWidgets.QVBoxLayout()
+
+        photos_dir_layout = QtWidgets.QHBoxLayout()
+        photos_dir_layout.addWidget(self.labelAddPhotos)
+        photos_dir_layout.addWidget(self.txtAddPhotos)
+        photos_dir_layout.addWidget(self.btnAddPhotos)
+
+        project_name_layout = QtWidgets.QHBoxLayout()
+        project_name_layout.addWidget(self.labelProjectName)
+        project_name_layout.addWidget(self.txtProjectName)
+        project_name_layout.addWidget(self.btnProjectName)
+
+        chunk_name_layout = QtWidgets.QHBoxLayout()
+        chunk_name_layout.addWidget(self.labelChunkName)
+        chunk_name_layout.addWidget(self.txtChunkName)
+        chunk_name_layout.addWidget(self.btnChunkName)
+
+        main_layout.addLayout(photos_dir_layout)
+        main_layout.addWidget(self.labelNamingConventions)
+        main_layout.addLayout(project_name_layout)
+        main_layout.addLayout(chunk_name_layout)
+        main_layout.addWidget(self.btnCreateProj)
+
+        self.setLayout(main_layout)
+
+        # connect buttons to slots
+        self.btnAddPhotos.clicked.connect(self.getPhotoFolder)
+        self.btnProjectName.clicked.connect(self.getProjectName)
+        self.btnChunkName.clicked.connect(self.getChunkName)
+        self.btnCreateProj.clicked.connect(self.createProject)
+
+    def getPhotoFolder(self):
+        self.photo_folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.parent.project_folder)
+        if(self.photo_folder):
+            self.txtAddPhotos.setPlainText(self.photo_folder)
+        else:
+            self.txtAddPhotos.setPlainText("No File Selected")
+
+    def getProjectName(self):
+        '''
+        Slot to save project name
+        '''
+        self.project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
+        self.project_name = path.basename(self.project_path)[:-4]
+        if(self.checkNaming(self.project_name) and self.project_name):
+            self.txtProjectName.setPlainText(self.project_name)
+        elif(not self.checkNaming(self.project_name)):
+            Metashape.app.messageBox("Unable to save project: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
+        else:
+            self.txtProjectName.setPlainText("No File Selected")
+
+    def getChunkName(self):
+        '''
+        Slot to save chunk name
+        '''
+        self.chunk_name, ok = QtWidgets.QInputDialog().getText(self, "Create Chunk", "Chunk name:")
+        if(self.checkNaming(self.chunk_name) and self.chunk_name and ok):
+            self.txtChunkName.setPlainText(self.chunk_name)
+        elif(not self.checkNaming(self.chunk_name) and ok):
+            Metashape.app.messageBox("Unable to create chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
+        else:
+            self.txtProjectName.setPlainText("No File Selected")
+
+
+    def checkNaming(self, name):
+        '''
+        Checks project and chunk names to ensure there are no special characters in them
+        '''
+        if(re.search("[\.\^\$\*\+\?\[\]\|\<\>&\\\]", name)):
+            return False
+        return True
+
+    def createProject(self):
+        '''
+        Saves project to the designated path and renames the active chunk
+        '''
+        self.parent.chunk.label = self.chunk_name
+
+        if(self.photo_folder and self.project_path):
+            self.parent.doc.save(path = self.project_path) # save project with new name
+            # add photos to active chunk
+            try:
+                image_list = os.listdir(self.photo_folder)
+                photo_list = list()
+                for photo in image_list:
+                    if photo.rsplit(".",1)[1].lower() in  ["jpg", "jpeg", "tif", "tiff"]:
+                        photo_list.append("/".join([self.photo_folder, photo]))
+                self.parent.chunk.addPhotos(photo_list)
+            except:
+                Metashape.app.messageBox("Error adding photos")
+                return
+
+        elif(self.project_path):
+            Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
+        elif(self.photo_folder):
+            Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
+
+
+
+class ReferenceFormatDlg(QtWidgets.QDialog):
+    # dummy class to demonstrate creating a sub-dialog box
+    # call like this: ref_dlg = ReferenceFormatDlg(self)
+    def __init__(self, parent):
+        self.chunk = parent.chunk
+        self.crs = parent.CRS
+
+        # initialize main dialog window
+        QtWidgets.QDialog.__init__(self, parent)
+        self.setWindowTitle("Import CSV")
+
+        self.labelCRS = QtWidgets.QLabel("Coordinate System:")
+        self.txtCRS = QtWidgets.QPlainTextEdit(self.crs.name)
+
+        mainLayout = QtWidgets.QHBoxLayout()
+        mainLayout.addWidget(self.labelCRS)
+        mainLayout.addWidget(self.txtCRS)
+        self.setLayout(mainLayout)
+
+        self.exec()
+
 
 
 class FullWorkflowDlg(QtWidgets.QDialog):
@@ -64,6 +223,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.setWindowTitle("Run Underwater Workflow")
 
         # --- Build Widgets ---
+        # these are declared as member variables so that they can be referenced and modified by slots that are outside of the constructor
         # -- General --
         # Coordinate System input
         self.labelCRS = QtWidgets.QLabel("Coordinate System:")
@@ -147,22 +307,28 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.labelRefX = QtWidgets.QLabel("X:")
         self.spinboxRefX = QtWidgets.QSpinBox()
         self.spinboxRefX.setMinimum(1)
+        self.spinboxRefX.setValue(2)
 
         self.labelRefY = QtWidgets.QLabel("Y:")
         self.spinboxRefY = QtWidgets.QSpinBox()
         self.spinboxRefY.setMinimum(1)
+        self.spinboxRefY.setValue(3)
 
         self.labelRefZ = QtWidgets.QLabel("Z:")
         self.spinboxRefZ = QtWidgets.QSpinBox()
         self.spinboxRefZ.setMinimum(1)
+        self.spinboxRefZ.setValue(4)
 
         self.labelAccuracy = QtWidgets.QLabel("Accuracy")
         self.spinboxXAcc = QtWidgets.QSpinBox()
         self.spinboxXAcc.setMinimum(1)
+        self.spinboxXAcc.setValue(5)
         self.spinboxYAcc = QtWidgets.QSpinBox()
         self.spinboxYAcc.setMinimum(1)
+        self.spinboxYAcc.setValue(6)
         self.spinboxZAcc = QtWidgets.QSpinBox()
         self.spinboxZAcc.setMinimum(1)
+        self.spinboxZAcc.setValue(7)
 
         self.labelSkipRows = QtWidgets.QLabel("Start import at row:")
         self.spinboxSkipRows = QtWidgets.QSpinBox()
@@ -178,6 +344,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.btnQuit.setFixedSize(90, 50)
 
         # --- Assemble widgets into layouts ---
+        # these are declared as local variables because they exist only within the scope of the dialog box, and
+        # the layout structure remains unchanged by user actions/slots (with the exception of the reference format box)
         main_layout = QtWidgets.QVBoxLayout()  # create main layout - this will hold sublayouts containing individual widgets
 
         # -- Create sublayouts --
@@ -261,6 +429,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         reference_groupbox.setLayout(reference_layout)
 
         # -- Assemble groupboxes into main layout --
+        addphotos_groupbox = AddPhotosGroupBox(self)
+        main_layout.addWidget(addphotos_groupbox)
         main_layout.addWidget(general_groupbox)
         main_layout.addWidget(reference_groupbox)
         main_layout.addLayout(ok_layout)
@@ -293,6 +463,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
     def runWorkFlow(self):
+        '''
+        Contains the main workflow structure
+        '''
         print("Script started...")
         self.setEnabled(False)
 
@@ -703,7 +876,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def getScaleFile(self):
         # maybe change this to local variable and get text value from text box directly when workflow is run?
         # might be better to connect textchanged() signal to a custom function, but more work
-
         self.scalebars_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.project_folder, "CSV files (*.csv *.txt)")[0]
         if(self.scalebars_path):
             self.txtScaleFile.setPlainText(self.scalebars_path)
@@ -719,7 +891,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def getOutputDir(self):
         self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
-        self.txtOutputDir.setPlainText(self.output_dir)
+        if(self.output_dir):
+            self.txtOutputDir.setPlainText(self.output_dir)
+        else:
+            self.txtOutputDir.setPlainText("No File Selected")
 
     def getCRS(self):
         crs = Metashape.app.getCoordinateSystem("Select Coordinate System")
@@ -749,7 +924,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             # self.txtCRS.setPlainText("Local Coordinates")
             self.txtCRS.setPlainText(self.CRS.name)
 
-        print(self.CRS)
 #         if (self.comboReference.currentIndex() == 0):
 #             self.comboTargetType.setEnabled(False)
 #         else:
