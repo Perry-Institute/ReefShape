@@ -48,14 +48,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         super().__init__("Project Setup")
         self.parent = parent
         self.chunk_name = parent.chunk.label
-        self.project_path = ""
-
-        self.labelAddPhotos = QtWidgets.QLabel("Add photos:")
-        self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
-        self.txtAddPhotos = QtWidgets.QPlainTextEdit("No file selected")
-        self.txtAddPhotos.setFixedHeight(40)
-        self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtAddPhotos.setReadOnly(True)
+        self.project_path = self.parent.doc.path
+        self.photo_folder = ""
 
         # text input for file name and chunk name
         self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
@@ -64,27 +58,40 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.labelNamingConventions.setAlignment(QtCore.Qt.AlignCenter)
         self.labelProjectName = QtWidgets.QLabel("Project Name:")
         self.btnProjectName = QtWidgets.QPushButton("Select File")
-        self.txtProjectName = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtProjectName = QtWidgets.QPlainTextEdit()
+        if(self.parent.project_name):
+            self.txtProjectName.setPlainText(self.parent.project_name)
+        else:
+            self.txtProjectName.setPlainText("Untitled")
         self.txtProjectName.setFixedHeight(40)
         self.txtProjectName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtProjectName.setReadOnly(True)
 
         self.labelChunkName = QtWidgets.QLabel("Chunk Name:")
         self.btnChunkName = QtWidgets.QPushButton("Create Chunk")
-        self.txtChunkName = QtWidgets.QPlainTextEdit("Chunk 1")
+        self.txtChunkName = QtWidgets.QPlainTextEdit(self.parent.chunk.label)
         self.txtChunkName.setFixedHeight(40)
         self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
 
-        self.btnCreateProj = QtWidgets.QPushButton("Create Project")
+
+        self.labelAddPhotos = QtWidgets.QLabel("Add Photos:")
+        self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
+        self.txtAddPhotos = QtWidgets.QPlainTextEdit()
+        if(len(self.parent.chunk.cameras) > 0):
+            self.txtAddPhotos.setPlainText(str(len(self.parent.chunk.cameras)) + " cameras found. Select a folder if you would like to add more")
+        else:
+            self.txtAddPhotos.setPlainText("No folder selected")
+        self.txtAddPhotos.setFixedHeight(40)
+        self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtAddPhotos.setReadOnly(True)
+
+        self.btnCreateProj = QtWidgets.QPushButton("Save Project")
         self.btnCreateProj.setFixedWidth(90)
+
+        self.labelPhotosAdded = QtWidgets.QLabel()
 
         # -- create layouts and assemble widgets --
         main_layout = QtWidgets.QVBoxLayout()
-
-        photos_dir_layout = QtWidgets.QHBoxLayout()
-        photos_dir_layout.addWidget(self.labelAddPhotos)
-        photos_dir_layout.addWidget(self.txtAddPhotos)
-        photos_dir_layout.addWidget(self.btnAddPhotos)
 
         project_name_layout = QtWidgets.QHBoxLayout()
         project_name_layout.addWidget(self.labelProjectName)
@@ -96,11 +103,21 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         chunk_name_layout.addWidget(self.txtChunkName)
         chunk_name_layout.addWidget(self.btnChunkName)
 
-        main_layout.addLayout(photos_dir_layout)
+
+        photos_dir_layout = QtWidgets.QHBoxLayout()
+        photos_dir_layout.addWidget(self.labelAddPhotos)
+        photos_dir_layout.addWidget(self.txtAddPhotos)
+        photos_dir_layout.addWidget(self.btnAddPhotos)
+
+        create_proj_layout = QtWidgets.QHBoxLayout()
+        create_proj_layout.addWidget(self.btnCreateProj)
+        create_proj_layout.addWidget(self.labelPhotosAdded)
+
         main_layout.addWidget(self.labelNamingConventions)
         main_layout.addLayout(project_name_layout)
         main_layout.addLayout(chunk_name_layout)
-        main_layout.addWidget(self.btnCreateProj)
+        main_layout.addLayout(photos_dir_layout)
+        main_layout.addLayout(create_proj_layout)
 
         self.setLayout(main_layout)
 
@@ -111,15 +128,33 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.btnCreateProj.clicked.connect(self.createProject)
 
     def getPhotoFolder(self):
+        '''
+        Slot to get a folder from which to add photos from the user
+        '''
         self.photo_folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.parent.project_folder)
+
         if(self.photo_folder):
-            self.txtAddPhotos.setPlainText(self.photo_folder)
+            # add photos to active chunk
+            try:
+                image_list = os.listdir(self.photo_folder)
+                photo_list = list()
+                for photo in image_list:
+                    if photo.rsplit(".",1)[1].lower() in  ["jpg", "jpeg", "tif", "tiff"]:
+                        photo_list.append("/".join([self.photo_folder, photo]))
+                self.parent.chunk.addPhotos(photo_list)
+                self.txtAddPhotos.setPlainText(self.photo_folder)
+                self.labelPhotosAdded.setText(str(len(photo_list)) + " images successfully added. Select another folder if you would like to add more")
+            except:
+                Metashape.app.messageBox("Error adding photos")
+                return
         else:
             self.txtAddPhotos.setPlainText("No File Selected")
+            Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
+
 
     def getProjectName(self):
         '''
-        Slot to save project name
+        Slot to get project name from the user
         '''
         self.project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
         self.project_name = path.basename(self.project_path)[:-4]
@@ -157,25 +192,11 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         '''
         self.parent.chunk.label = self.chunk_name
 
-        if(self.photo_folder and self.project_path):
-            self.parent.doc.save(path = self.project_path) # save project with new name
-            # add photos to active chunk
-            try:
-                image_list = os.listdir(self.photo_folder)
-                photo_list = list()
-                for photo in image_list:
-                    if photo.rsplit(".",1)[1].lower() in  ["jpg", "jpeg", "tif", "tiff"]:
-                        photo_list.append("/".join([self.photo_folder, photo]))
-                self.parent.chunk.addPhotos(photo_list)
-            except:
-                Metashape.app.messageBox("Error adding photos")
-                return
-
-        elif(self.project_path):
-            Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
-        elif(self.photo_folder):
+        if(self.project_path):
+            # save project with new name - if project already exists, the current project state will be saved as changes to it
+            self.parent.doc.save(path = self.project_path)
+        else:
             Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
-
 
 
 class ReferenceFormatDlg(QtWidgets.QDialog):
@@ -238,19 +259,27 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.checkBoxPreSelect.setChecked(True)
         self.checkBoxPreSelect.setToolTip("Generic preselection speeds up photo alignment, but for photo sets with severe caustics disabling it can make alignment more effective")
 
-        # taglab outputs
-        self.checkBoxTagLab = QtWidgets.QCheckBox("Create tiled outputs for use in TagLab")
-        self.checkBoxTagLab.setChecked(True)
-        self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
-                                       "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
+        # set orthomosaic resolution
+        self.checkBoxDefaultRes = QtWidgets.QCheckBox("Use Metashape default resolution")
+        self.checkBoxDefaultRes.setToolTip("If this option is enabled, Metashape will calculate the orthomosaic resolution based on the ")
+        self.labelCustomRes = QtWidgets.QLabel("Custom Resolution (m): ")
+        self.spinboxCustomRes = QtWidgets.QDoubleSpinBox()
+        self.spinboxCustomRes.setDecimals(5)
+        self.spinboxCustomRes.setValue(0.0005)
 
-        # directory input for exports
-        self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
-        self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
-        self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
-        self.txtOutputDir.setFixedHeight(40)
-        self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtOutputDir.setReadOnly(True)
+        # SM: remove export option 1/30/23
+        # # taglab outputs
+        # self.checkBoxTagLab = QtWidgets.QCheckBox("Create tiled outputs for use in TagLab")
+        # self.checkBoxTagLab.setChecked(True)
+        # self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
+        #                                "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
+        # # directory input for exports
+        # self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
+        # self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
+        # self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
+        # self.txtOutputDir.setFixedHeight(40)
+        # self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        # self.txtOutputDir.setReadOnly(True)
 
         # -- Georeferencing --
 
@@ -356,12 +385,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         checkbox_layout = QtWidgets.QHBoxLayout()
         checkbox_layout.addWidget(self.checkBoxPreSelect)
-        checkbox_layout.addWidget(self.checkBoxTagLab)
+        checkbox_layout.addWidget(self.checkBoxDefaultRes)
+        checkbox_layout.addWidget(self.labelCustomRes)
+        checkbox_layout.addWidget(self.spinboxCustomRes)
+        # checkbox_layout.addWidget(self.checkBoxTagLab)
 
-        output_layout = QtWidgets.QHBoxLayout()
-        output_layout.addWidget(self.labelOutputDir)
-        output_layout.addWidget(self.txtOutputDir)
-        output_layout.addWidget(self.btnOutputDir)
+        # output_layout = QtWidgets.QHBoxLayout()
+        # output_layout.addWidget(self.labelOutputDir)
+        # output_layout.addWidget(self.txtOutputDir)
+        # output_layout.addWidget(self.btnOutputDir)
 
         autodetect_layout = QtWidgets.QHBoxLayout()
         autodetect_layout.addWidget(self.labelReference)
@@ -417,7 +449,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         general_layout = QtWidgets.QVBoxLayout()
         general_layout.addLayout(crs_layout)
         general_layout.addLayout(checkbox_layout)
-        general_layout.addLayout(output_layout)
+        # general_layout.addLayout(output_layout)
         general_groupbox.setLayout(general_layout)
 
         reference_groupbox = QtWidgets.QGroupBox("Georeferencing")
@@ -452,7 +484,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # to use widget-specific signals (such as currentIndexChanged) instead of core signals
         QtCore.QObject.connect(self.btnScaleFile, QtCore.SIGNAL("clicked()"), self.getScaleFile)
         QtCore.QObject.connect(self.btnGeoFile, QtCore.SIGNAL("clicked()"), self.getGeoFile)
-        self.btnOutputDir.clicked.connect(self.getOutputDir)
+        self.checkBoxDefaultRes.stateChanged.connect(self.onResolutionChange)
+        # self.btnOutputDir.clicked.connect(self.getOutputDir)
         self.btnCRS.clicked.connect(self.getCRS)
         self.comboReference.currentIndexChanged.connect(self.onReferenceChanged)
 
@@ -480,7 +513,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         CHUNK = self.chunk
         ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
         DM_QUALITY = 4 # quality setting for depth maps; corresponds to medium in GUI
-        ORTHO_RES = 0.0005 # cell size in meters for orthomosaic
         INTERPOLATION = Metashape.DisabledInterpolation # interpolation setting for DEM creation
 
         # set arguments from dialog box
@@ -491,14 +523,19 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 scalebars_path = self.scalebars_path
                 georef_path = self.georef_path
         except:
-            print("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information" +
-                    "\nScript aborted")
+            Metashape.app.messageBox("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information")
+            print("Script aborted")
             self.reject()
             return
 
-        output_dir = self.output_dir
+        # output_dir = self.output_dir
+        # taglab_outputs = self.checkBoxTagLab.isChecked()
         generic_preselect = self.checkBoxPreSelect.isChecked()
-        taglab_outputs = self.checkBoxTagLab.isChecked()
+
+        if(self.checkBoxDefaultRes.isChecked()):
+            ORTHO_RES = 0
+        else:
+            ORTHO_RES = self.spinboxCustomRes.value()
 
         target_type_index = self.comboTargetType.currentIndex()
         target_type = self.targetTypes[target_type_index][1]
@@ -507,6 +544,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                             self.spinboxXAcc.value(), self.spinboxYAcc.value(), self.spinboxZAcc.value(), self.spinboxSkipRows.value()]
 
         print(ref_formatting)
+
         CRS = self.CRS
         CHUNK.crs = CRS
 
@@ -573,7 +611,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             print(" --- Mesh Generated --- ")
             self.updateAndSave(DOC)
 
-        # if not usin automatic referencing, exit script after mesh creation
+        # if not using automatic referencing, exit script after mesh creation
         if(not self.autoDetectMarkers and len(CHUNK.markers) == 0):
             print("Exiting script for manual referencing")
             self.reject()
@@ -615,30 +653,31 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # b. export orthomosaic and DEM in full format
         # WG: changed these to NOT clip the full outputs to bounding box. Future: add a shapefile export in here that defines boundary
-        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
-                           source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
-                           save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                           min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
-
-        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
-                           source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = jpg,
-                           save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                           min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
-
-        # export ortho and dem in blockwise format for Taglab
-        if(taglab_outputs):
-            CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
-                               source_data = Metashape.OrthomosaicData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
-                               save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                               min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
-            CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + "_DEM.tif", nodata_value = -5,
-                               source_data = Metashape.ElevationData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
-                               save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                               min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
-
+        # SM: remove export stage from workflow 1/30/23
+        # CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
+        #                    source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
+        #                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+        #                    min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+        #
+        # CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
+        #                    source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = jpg,
+        #                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+        #                    min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+        #
+        # # export ortho and dem in blockwise format for Taglab
+        # if(taglab_outputs):
+        #     CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
+        #                        source_data = Metashape.OrthomosaicData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
+        #                        save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+        #                        min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
+        #     CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + "_DEM.tif", nodata_value = -5,
+        #                        source_data = Metashape.ElevationData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
+        #                        save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+        #                        min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
+        #
 
         ###### 4. Clean up project ######
-        self.cleanProject(CHUNK)
+        # self.cleanProject(CHUNK)
         self.updateAndSave(DOC)
         print("Script finished")
 
@@ -889,12 +928,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         else:
             self.txtGeoFile.setPlainText("No File Selected")
 
-    def getOutputDir(self):
-        self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
-        if(self.output_dir):
-            self.txtOutputDir.setPlainText(self.output_dir)
-        else:
-            self.txtOutputDir.setPlainText("No File Selected")
+    # def getOutputDir(self):
+    #     self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
+    #     if(self.output_dir):
+    #         self.txtOutputDir.setPlainText(self.output_dir)
+    #     else:
+    #         self.txtOutputDir.setPlainText("No File Selected")
 
     def getCRS(self):
         crs = Metashape.app.getCoordinateSystem("Select Coordinate System")
@@ -928,6 +967,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 #             self.comboTargetType.setEnabled(False)
 #         else:
 #             self.comboTargetType.setEnabled(True)
+
+    def onResolutionChange(self):
+        use_default_res = self.checkBoxDefaultRes.isChecked()
+        self.labelCustomRes.setEnabled(not use_default_res)
+        self.spinboxCustomRes.setEnabled(not use_default_res)
 
 
 def run_script():

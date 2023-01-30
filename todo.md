@@ -14,7 +14,8 @@ Desired Features:
   - potentially add a table view so that the user can preview the columns that they are assigning to each variable
 
 Known Problems:
-- output sizes can be unnecessarily large, especially when producing duplicate outputs for use in TagLab
+- adding photos through the dialog box doesn't work if there are raw files alongside others - unsure of how extensive/problematic this is
+  - seems to not be an issue with most raw file extensions, including .raw files, so idk what was going on with Will's
 - potential 'CUDA out of memory' error, likely fixed by updating GPU drivers
 
 Code Quality:
@@ -24,5 +25,4 @@ Code Quality:
 
 Testing:
 - test georeferencing formatting
-- test starting code with photos already added
-  - should work fine, but might be good to add a note somewhere outlining the behavior in that circumstance
+- test custom vs default resolution
