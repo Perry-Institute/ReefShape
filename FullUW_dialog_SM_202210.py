@@ -56,6 +56,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
                                                         "using the AGRRA site code\nas the project name and the date the data "
                                                         "was collected (in YYYYMMDD format) as the chunk name.")
         self.labelNamingConventions.setAlignment(QtCore.Qt.AlignCenter)
+
         self.labelProjectName = QtWidgets.QLabel("Project Name:")
         self.btnProjectName = QtWidgets.QPushButton("Select File")
         self.txtProjectName = QtWidgets.QPlainTextEdit()
@@ -72,7 +73,6 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.txtChunkName = QtWidgets.QPlainTextEdit(self.parent.chunk.label)
         self.txtChunkName.setFixedHeight(40)
         self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-
 
         self.labelAddPhotos = QtWidgets.QLabel("Add Photos:")
         self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
@@ -329,21 +329,23 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.txtGeoFile.setReadOnly(True)
 
         # add in spinbox widgets to define georeferencing format
+        self.labelInputFormatting = QtWidgets.QLabel("Specify which columns in the georeferencing file correspond to the indicated properties")
+
         self.labelRefLabel = QtWidgets.QLabel("Label:")
         self.spinboxRefLabel = QtWidgets.QSpinBox()
         self.spinboxRefLabel.setMinimum(1)
 
-        self.labelRefX = QtWidgets.QLabel("X:")
+        self.labelRefX = QtWidgets.QLabel("Long (X):")
         self.spinboxRefX = QtWidgets.QSpinBox()
         self.spinboxRefX.setMinimum(1)
-        self.spinboxRefX.setValue(2)
+        self.spinboxRefX.setValue(3)
 
-        self.labelRefY = QtWidgets.QLabel("Y:")
+        self.labelRefY = QtWidgets.QLabel("Lat (Y):")
         self.spinboxRefY = QtWidgets.QSpinBox()
         self.spinboxRefY.setMinimum(1)
-        self.spinboxRefY.setValue(3)
+        self.spinboxRefY.setValue(2)
 
-        self.labelRefZ = QtWidgets.QLabel("Z:")
+        self.labelRefZ = QtWidgets.QLabel("Depth (Z):")
         self.spinboxRefZ = QtWidgets.QSpinBox()
         self.spinboxRefZ.setMinimum(1)
         self.spinboxRefZ.setValue(4)
@@ -354,14 +356,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.spinboxXAcc.setValue(5)
         self.spinboxYAcc = QtWidgets.QSpinBox()
         self.spinboxYAcc.setMinimum(1)
-        self.spinboxYAcc.setValue(6)
+        self.spinboxYAcc.setValue(5)
         self.spinboxZAcc = QtWidgets.QSpinBox()
         self.spinboxZAcc.setMinimum(1)
-        self.spinboxZAcc.setValue(7)
+        self.spinboxZAcc.setValue(6)
 
         self.labelSkipRows = QtWidgets.QLabel("Start import at row:")
         self.spinboxSkipRows = QtWidgets.QSpinBox()
         self.spinboxSkipRows.setMinimum(1)
+        self.spinboxSkipRows.setValue(2)
 
         # run script button
         self.btnOk = QtWidgets.QPushButton("Ok")
@@ -414,26 +417,28 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         ref_format_layout.setColumnStretch(0, 1)
         ref_format_layout.setColumnStretch(1, 10)
         ref_format_layout.setColumnStretch(2, 10)
-        ref_format_layout.addWidget(self.labelRefLabel, 0, 0)
-        ref_format_layout.addWidget(self.spinboxRefLabel, 0, 1)
-        ref_format_layout.addWidget(self.labelAccuracy, 0, 2)
+        ref_format_layout.addWidget(self.labelInputFormatting, 0, 0, 1, 3)
 
-        ref_format_layout.addWidget(self.labelRefX, 1, 0)
-        ref_format_layout.addWidget(self.spinboxRefX, 1, 1)
-        ref_format_layout.addWidget(self.spinboxXAcc, 1, 2)
+        ref_format_layout.addWidget(self.labelRefLabel, 1, 0)
+        ref_format_layout.addWidget(self.spinboxRefLabel, 1, 1)
+        ref_format_layout.addWidget(self.labelAccuracy, 1, 2)
 
-        ref_format_layout.addWidget(self.labelRefY, 2, 0)
-        ref_format_layout.addWidget(self.spinboxRefY, 2, 1)
-        ref_format_layout.addWidget(self.spinboxYAcc, 2, 2)
+        ref_format_layout.addWidget(self.labelRefX, 2, 0)
+        ref_format_layout.addWidget(self.spinboxRefX, 2, 1)
+        ref_format_layout.addWidget(self.spinboxXAcc, 2, 2)
 
-        ref_format_layout.addWidget(self.labelRefZ, 3, 0)
-        ref_format_layout.addWidget(self.spinboxRefZ, 3, 1)
-        ref_format_layout.addWidget(self.spinboxZAcc, 3, 2)
+        ref_format_layout.addWidget(self.labelRefY, 3, 0)
+        ref_format_layout.addWidget(self.spinboxRefY, 3, 1)
+        ref_format_layout.addWidget(self.spinboxYAcc, 3, 2)
+
+        ref_format_layout.addWidget(self.labelRefZ, 4, 0)
+        ref_format_layout.addWidget(self.spinboxRefZ, 4, 1)
+        ref_format_layout.addWidget(self.spinboxZAcc, 4, 2)
 
         skip_rows_layout = QtWidgets.QHBoxLayout()
         skip_rows_layout.addWidget(self.labelSkipRows)
         skip_rows_layout.addWidget(self.spinboxSkipRows)
-        ref_format_layout.addLayout(skip_rows_layout, 4, 0, 1, 2)
+        ref_format_layout.addLayout(skip_rows_layout, 5, 0, 1, 2)
 
         self.ref_format_groupbox = QtWidgets.QGroupBox("Column Formatting")
         self.ref_format_groupbox.setLayout(ref_format_layout)
@@ -841,6 +846,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             # import new georeferencing data
             chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
                                   crs = _crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
+
+            os.remove(new_path)
             print(" --- Georeferencing Updated --- ")
         except:
             return "Script error: There was a problem reading georeferencing data\n"
@@ -989,8 +996,7 @@ def run_script():
 
 
 # add function to menu
-# label = "Custom/Full Underwater Workflow"
-# Metashape.app.addMenuItem(label, run_script)
-# print("To execute this script press {}".format(label))
-
-run_script()
+label = "Custom/Full Underwater Workflow"
+Metashape.app.removeMenuItem(label)
+Metashape.app.addMenuItem(label, run_script)
+print("To execute this script press {}".format(label))

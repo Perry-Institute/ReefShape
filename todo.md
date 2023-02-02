@@ -17,6 +17,7 @@ Known Problems:
 
 Code Quality:
 - add documentation comments to each function
+- update readme to reflect changes to ui
 - edit existing comments and add comments where needed
 - potentially refactor dialog box - break component groupboxes into separate classes
 
