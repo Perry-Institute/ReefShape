@@ -144,7 +144,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
                 self.parent.chunk.addPhotos(photo_list)
                 self.txtAddPhotos.setPlainText(self.photo_folder)
                 self.labelPhotosAdded.setText(str(len(photo_list)) + " images successfully added. Select another folder if you would like to add more")
-            except:
+            except Exception as err:
                 Metashape.app.messageBox("Error adding photos")
                 return
         else:
@@ -199,9 +199,9 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
 
 
-class ReferenceFormatDlg(QtWidgets.QDialog):
+class BoundaryMarkerDlg(QtWidgets.QDialog):
     # dummy class to demonstrate creating a sub-dialog box
-    # call like this: ref_dlg = ReferenceFormatDlg(self)
+    # call like this: ref_dlg = BoundaryMarkerDlg(self)
     def __init__(self, parent):
         self.chunk = parent.chunk
         self.crs = parent.CRS
@@ -274,12 +274,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
         #                                "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
         # # directory input for exports
-        # self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
-        # self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
-        # self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
-        # self.txtOutputDir.setFixedHeight(40)
-        # self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        # self.txtOutputDir.setReadOnly(True)
+        self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
+        self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
+        self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtOutputDir.setFixedHeight(40)
+        self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtOutputDir.setReadOnly(True)
 
         # -- Georeferencing --
 
@@ -390,10 +390,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         checkbox_layout.addWidget(self.spinboxCustomRes)
         # checkbox_layout.addWidget(self.checkBoxTagLab)
 
-        # output_layout = QtWidgets.QHBoxLayout()
-        # output_layout.addWidget(self.labelOutputDir)
-        # output_layout.addWidget(self.txtOutputDir)
-        # output_layout.addWidget(self.btnOutputDir)
+        output_layout = QtWidgets.QHBoxLayout()
+        output_layout.addWidget(self.labelOutputDir)
+        output_layout.addWidget(self.txtOutputDir)
+        output_layout.addWidget(self.btnOutputDir)
 
         autodetect_layout = QtWidgets.QHBoxLayout()
         autodetect_layout.addWidget(self.labelReference)
@@ -449,7 +449,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         general_layout = QtWidgets.QVBoxLayout()
         general_layout.addLayout(crs_layout)
         general_layout.addLayout(checkbox_layout)
-        # general_layout.addLayout(output_layout)
+        general_layout.addLayout(output_layout)
         general_groupbox.setLayout(general_layout)
 
         reference_groupbox = QtWidgets.QGroupBox("Georeferencing")
@@ -485,7 +485,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         QtCore.QObject.connect(self.btnScaleFile, QtCore.SIGNAL("clicked()"), self.getScaleFile)
         QtCore.QObject.connect(self.btnGeoFile, QtCore.SIGNAL("clicked()"), self.getGeoFile)
         self.checkBoxDefaultRes.stateChanged.connect(self.onResolutionChange)
-        # self.btnOutputDir.clicked.connect(self.getOutputDir)
+        self.btnOutputDir.clicked.connect(self.getOutputDir)
         self.btnCRS.clicked.connect(self.getCRS)
         self.comboReference.currentIndexChanged.connect(self.onReferenceChanged)
 
@@ -528,7 +528,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.reject()
             return
 
-        # output_dir = self.output_dir
+        output_dir = self.output_dir
         # taglab_outputs = self.checkBoxTagLab.isChecked()
         generic_preselect = self.checkBoxPreSelect.isChecked()
 
@@ -542,8 +542,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         ref_formatting = [self.spinboxRefLabel.value(), self.spinboxRefX.value(), self.spinboxRefY.value(), self.spinboxRefZ.value(),
                             self.spinboxXAcc.value(), self.spinboxYAcc.value(), self.spinboxZAcc.value(), self.spinboxSkipRows.value()]
-
-        print(ref_formatting)
 
         CRS = self.CRS
         CHUNK.crs = CRS
@@ -576,9 +574,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # c. scale model
         if(len(CHUNK.scalebars) == 0 and self.autoDetectMarkers): # creates scalebars only if there are none already - ask Will if this makes sense
-            scale_except = self.createScalebars(CHUNK, scalebars_path)
             ref_except = self.referenceModel(CHUNK, georef_path, CRS, ref_formatting)
-            # this structure is really clunky but I'm not sure what the best way to differentiate between sub-exceptions is without defining whole exception classes, which seems excessiv
+            scale_except = ""
+            if(not ref_except):
+                scale_except = self.createScalebars(CHUNK, scalebars_path)
+            # this structure is really clunky but I'm not sure what the best way to differentiate between sub-exceptions is without defining whole exception classes, which seems excessive
             error = ""
             if(scale_except or ref_except):
                 if(scale_except):
@@ -588,12 +588,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                     print(ref_except)
                     error = error + ref_except
                 Metashape.app.messageBox("Unable to scale and reference model:\n" + error + "Check that the files are formatted correctly and try again, or add markers and scalebars through the Metashape GUI.")
-                if(not go):
-                    self.reject()
-                    return
+                self.reject()
+                return
             else:
                 CHUNK.updateTransform()
-
 
 
         if(CHUNK.model == None):
@@ -629,6 +627,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             print(" --- Orthomosaic and DEM Built --- ")
             self.updateAndSave(DOC)
 
+        # generate report
+        CHUNK.exportReport(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".pdf", title = project_name + " " + CHUNK.label,
+                           description = "Processing report for " + project_name + " on chunk " + CHUNK.label, font_size=12, page_numbers=True, include_system_info=True)
+
         # c. create boundary
         if(not CHUNK.shapes):
             self.boundaryCreation(CHUNK)
@@ -636,10 +638,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         ###### 3. Export products ######
-
-        # a. generate report
-        CHUNK.exportReport(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".pdf", title = project_name + " " + CHUNK.label,
-                           description = "Processing report for " + project_name + " on chunk " + CHUNK.label, font_size=12, page_numbers=True, include_system_info=True)
 
         # set up compression parameters
         jpg = Metashape.ImageCompression()
@@ -651,19 +649,21 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         lzw = jpg
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
 
-        # b. export orthomosaic and DEM in full format
+        # export orthomosaic and DEM in full format
         # WG: changed these to NOT clip the full outputs to bounding box. Future: add a shapefile export in here that defines boundary
         # SM: remove export stage from workflow 1/30/23
-        # CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
-        #                    source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
-        #                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-        #                    min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
-        #
-        # CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
-        #                    source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = jpg,
-        #                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-        #                    min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
-        #
+        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
+                           source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
+                           save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+                           min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+
+        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
+                           source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = jpg,
+                           save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
+                           min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+
+        CHUNK.exportShapes(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_boundary.shp", save_points=False, save_polylines=False, save_polygons=False,
+                           format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
         # # export ortho and dem in blockwise format for Taglab
         # if(taglab_outputs):
         #     CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
@@ -765,7 +765,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
            print(" --- Scalebars Created --- ")
 
        except:
-           return "There was a problem reading scalebar data\n"
+           return "Script error: There was a problem reading scalebar data\n"
 
 
 
@@ -813,6 +813,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             while not eof:
                 marker_ref = line.split(sep = ",")
                 ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[X], marker_ref[Y], marker_ref[Z]]
+                for item in ref_line[1:]:
+                    try:
+                        item_float = float(item)
+                    except Exception as err:
+                        print("Script error: '" + item + "'" + " cannot be read as a coordinate value. Your column assignments may be incorrect.")
+                        raise
                 #print(ref_line)
                 if(not len(ref)):
                     ref = [ref_line]
@@ -837,7 +843,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                                   crs = _crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
             print(" --- Georeferencing Updated --- ")
         except:
-            return "There was a problem reading georeferencing data\n"
+            return "Script error: There was a problem reading georeferencing data\n"
 
 
 
@@ -928,12 +934,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         else:
             self.txtGeoFile.setPlainText("No File Selected")
 
-    # def getOutputDir(self):
-    #     self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
-    #     if(self.output_dir):
-    #         self.txtOutputDir.setPlainText(self.output_dir)
-    #     else:
-    #         self.txtOutputDir.setPlainText("No File Selected")
+    def getOutputDir(self):
+        self.output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.project_folder)
+        if(self.output_dir):
+            self.txtOutputDir.setPlainText(self.output_dir)
+        else:
+            self.txtOutputDir.setPlainText("No File Selected")
 
     def getCRS(self):
         crs = Metashape.app.getCoordinateSystem("Select Coordinate System")
