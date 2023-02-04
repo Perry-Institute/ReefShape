@@ -43,6 +43,9 @@ if found_major_version != compatible_major_version:
 
 
 class AddPhotosGroupBox(QtWidgets.QGroupBox):
+    '''
+    Groupbox holding widgets used to setup the project and add photos
+    '''
     def __init__(self, parent):
         # call parent constructor to initialize
         super().__init__("Project Setup")
@@ -51,7 +54,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.project_path = self.parent.doc.path
         self.photo_folder = ""
 
-        # text input for file name and chunk name
+        # ---- create widgets ----
         self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
                                                         "using the AGRRA site code\nas the project name and the date the data "
                                                         "was collected (in YYYYMMDD format) as the chunk name.")
@@ -86,11 +89,11 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.txtAddPhotos.setReadOnly(True)
 
         self.btnCreateProj = QtWidgets.QPushButton("Save Project")
-        self.btnCreateProj.setFixedWidth(90)
+        self.btnCreateProj.setFixedWidth(75)
 
         self.labelPhotosAdded = QtWidgets.QLabel()
 
-        # -- create layouts and assemble widgets --
+        # ---- create layouts and assemble widgets ----
         main_layout = QtWidgets.QVBoxLayout()
 
         project_name_layout = QtWidgets.QHBoxLayout()
@@ -103,15 +106,15 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         chunk_name_layout.addWidget(self.txtChunkName)
         chunk_name_layout.addWidget(self.btnChunkName)
 
-
         photos_dir_layout = QtWidgets.QHBoxLayout()
         photos_dir_layout.addWidget(self.labelAddPhotos)
         photos_dir_layout.addWidget(self.txtAddPhotos)
         photos_dir_layout.addWidget(self.btnAddPhotos)
 
         create_proj_layout = QtWidgets.QHBoxLayout()
-        create_proj_layout.addWidget(self.btnCreateProj)
+        create_proj_layout.addStretch()
         create_proj_layout.addWidget(self.labelPhotosAdded)
+        create_proj_layout.addWidget(self.btnCreateProj)
 
         main_layout.addWidget(self.labelNamingConventions)
         main_layout.addLayout(project_name_layout)
@@ -129,7 +132,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
     def getPhotoFolder(self):
         '''
-        Slot to get a folder from which to add photos from the user
+        Slot: gets a folder from which to add photos from the user, then adds the photos to the
+        project's active chunk
         '''
         self.photo_folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.parent.project_folder)
 
@@ -154,7 +158,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
     def getProjectName(self):
         '''
-        Slot to get project name from the user
+        Slot: gets project name from the user
         '''
         self.project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
         self.project_name = path.basename(self.project_path)[:-4]
@@ -200,32 +204,100 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
 
 class BoundaryMarkerDlg(QtWidgets.QDialog):
-    # dummy class to demonstrate creating a sub-dialog box
-    # call like this: ref_dlg = BoundaryMarkerDlg(self)
+    '''
+    Optional sub-dialog box in which the user can specify the arrangement of the corner
+    markers for georeferencing
+    '''
     def __init__(self, parent):
         self.chunk = parent.chunk
         self.crs = parent.CRS
+        self.corner_markers = [] # initialize return value to empty list
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowTitle("Import CSV")
+        self.setWindowTitle("Corner Marker Positions")
 
-        self.labelCRS = QtWidgets.QLabel("Coordinate System:")
-        self.txtCRS = QtWidgets.QPlainTextEdit(self.crs.name)
+        # ---- create widgets ----
+        self.labelCorner1 = QtWidgets.QLabel("Corner 1 target number: ")
+        self.spinboxCorner1 = QtWidgets.QSpinBox()
+        self.spinboxCorner1.setMinimum(1)
 
-        mainLayout = QtWidgets.QHBoxLayout()
-        mainLayout.addWidget(self.labelCRS)
-        mainLayout.addWidget(self.txtCRS)
+        self.labelCorner2 = QtWidgets.QLabel("Corner 2 target number: ")
+        self.spinboxCorner2 = QtWidgets.QSpinBox()
+        self.spinboxCorner2.setMinimum(1)
+        self.spinboxCorner2.setValue(2)
+
+        self.labelCorner3 = QtWidgets.QLabel("Corner 3 target number: ")
+        self.spinboxCorner3 = QtWidgets.QSpinBox()
+        self.spinboxCorner3.setMinimum(1)
+        self.spinboxCorner3.setValue(3)
+
+        self.labelCorner4 = QtWidgets.QLabel("Corner 4 target number: ")
+        self.spinboxCorner4 = QtWidgets.QSpinBox()
+        self.spinboxCorner4.setMinimum(1)
+        self.spinboxCorner4.setValue(4)
+
+        self.btnOk = QtWidgets.QPushButton("Ok")
+        self.btnOk.setFixedSize(90, 50)
+        self.btnOk.setToolTip("Set Marker Positions")
+
+        self.btnClose = QtWidgets.QPushButton("Close")
+        self.btnClose.setFixedSize(90, 50)
+
+        # ---- create layouts to hold widgets ----
+        corner1_layout = QtWidgets.QHBoxLayout()
+        corner1_layout.addWidget(self.labelCorner1)
+        corner1_layout.addWidget(self.spinboxCorner1)
+
+        corner2_layout = QtWidgets.QHBoxLayout()
+        corner2_layout.addWidget(self.labelCorner2)
+        corner2_layout.addWidget(self.spinboxCorner2)
+
+        corner3_layout = QtWidgets.QHBoxLayout()
+        corner3_layout.addWidget(self.labelCorner3)
+        corner3_layout.addWidget(self.spinboxCorner3)
+
+        corner4_layout = QtWidgets.QHBoxLayout()
+        corner4_layout.addWidget(self.labelCorner4)
+        corner4_layout.addWidget(self.spinboxCorner4)
+
+        ok_layout = QtWidgets.QHBoxLayout()
+        ok_layout.addWidget(self.btnOk)
+        ok_layout.addWidget(self.btnClose)
+
+        # ---- assemble layouts into main layout ----
+        mainLayout = QtWidgets.QVBoxLayout()
+        mainLayout.addLayout(corner1_layout)
+        mainLayout.addLayout(corner2_layout)
+        mainLayout.addLayout(corner3_layout)
+        mainLayout.addLayout(corner4_layout)
+        mainLayout.addLayout(ok_layout)
+
         self.setLayout(mainLayout)
 
+        # ---- connect signals and slots ----
+        self.btnOk.clicked.connect(self.ok)
+        QtCore.QObject.connect(self.btnClose, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
+
         self.exec()
+
+    def ok(self):
+        '''
+        Slot for user to set corner marker values and close the dialog - ensures that there is a valid
+        return value only if the user clicks ok. A more integrated Qt way to do this might be to
+        reimplement the core 'accept()' slot, but this way is a bit simpler.
+
+        For this specific use case, making sure there is a valid return isn't really necessary since there
+        will be a default value in the main dialog anyway, but it's good practice and keeps the script a bit more flexible
+        '''
+        self.corner_markers = [self.spinboxCorner1.value(), self.spinboxCorner2.value(), self.spinboxCorner3.value(), self.spinboxCorner4.value()]
+        self.reject()
 
 
 
 class FullWorkflowDlg(QtWidgets.QDialog):
 
     def __init__(self, parent):
-
         # set document info
         self.doc = Metashape.app.document
         self.chunk = self.doc.chunk
@@ -233,20 +305,23 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.project_name = path.basename(self.doc.path)[:-4] # extracts project name from file path
         self.output_dir = self.project_folder
 
-        # add crs options
+        # set default crs options
         self.localCRS = Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
         self.defaultCRS = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]')
         self.CRS = self.chunk.crs
         self.autoDetectMarkers = False
+        # set default corner marker arrangement
+        self.corner_markers = [1, 2, 3, 4]
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
         self.setWindowTitle("Run Underwater Workflow")
 
-        # --- Build Widgets ---
-        # these are declared as member variables so that they can be referenced and modified by slots that are outside of the constructor
+        # ----- Build Widgets -----
+        # these are declared as member variables so that they can be referenced
+        # and modified by slots that are outside of the constructor
         # -- General --
-        # Coordinate System input
+        # Coordinate system input
         self.labelCRS = QtWidgets.QLabel("Coordinate System:")
         self.btnCRS = QtWidgets.QPushButton("Select CRS")
         self.txtCRS = QtWidgets.QPlainTextEdit("Local Coordinates (m)")
@@ -273,7 +348,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # self.checkBoxTagLab.setChecked(True)
         # self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
         #                                "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
-        # # directory input for exports
+        # directory input for exports
         self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
         self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
         self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
@@ -282,7 +357,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.txtOutputDir.setReadOnly(True)
 
         # -- Georeferencing --
-
         # scaling/georeferencing type
         self.labelReference = QtWidgets.QLabel("Are you using auto-detectable markers for scaling and georeferencing?")
         self.comboReference = QtWidgets.QComboBox()
@@ -327,6 +401,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.txtGeoFile.setFixedHeight(40)
         self.txtGeoFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtGeoFile.setReadOnly(True)
+
+        self.btnMarkerPosition = QtWidgets.QPushButton("Adjust Corner Markers")
+        self.btnMarkerPosition.setEnabled(False)
+        # self.btnMarkerPosition.setFixedWidth(75)
 
         # add in spinbox widgets to define georeferencing format
         self.labelInputFormatting = QtWidgets.QLabel("Specify which columns in the georeferencing file correspond to the indicated properties")
@@ -413,6 +491,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         geo_layout.addWidget(self.txtGeoFile)
         geo_layout.addWidget(self.btnGeoFile)
 
+        marker_pos_layout = QtWidgets.QHBoxLayout()
+        marker_pos_layout.addStretch()
+        marker_pos_layout.addWidget(self.btnMarkerPosition)
+
         ref_format_layout = QtWidgets.QGridLayout()
         ref_format_layout.setColumnStretch(0, 1)
         ref_format_layout.setColumnStretch(1, 10)
@@ -462,6 +544,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         reference_layout.addLayout(autodetect_layout)
         reference_layout.addLayout(scale_layout)
         reference_layout.addLayout(geo_layout)
+        reference_layout.addLayout(marker_pos_layout)
         reference_layout.addWidget(self.ref_format_groupbox)
         reference_groupbox.setLayout(reference_layout)
 
@@ -471,16 +554,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         main_layout.addWidget(general_groupbox)
         main_layout.addWidget(reference_groupbox)
         main_layout.addLayout(ok_layout)
-
-        # old format
-        # main_layout.addLayout(reference_layout)
-        # main_layout.addLayout(scale_layout)
-        # main_layout.addLayout(geo_layout)
-        # main_layout.addWidget(ref_format_groupbox)
-        # main_layout.addLayout(crs_layout)
-        # main_layout.addLayout(checkbox_layout)
-        # main_layout.addLayout(output_layout)
-        # main_layout.addLayout(ok_layout)
 
         self.setLayout(main_layout)
 
@@ -493,6 +566,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.btnOutputDir.clicked.connect(self.getOutputDir)
         self.btnCRS.clicked.connect(self.getCRS)
         self.comboReference.currentIndexChanged.connect(self.onReferenceChanged)
+        self.btnMarkerPosition.clicked.connect(self.getMarkerPosition)
 
         QtCore.QObject.connect(self.btnOk, QtCore.SIGNAL("clicked()"), self.runWorkFlow)
         QtCore.QObject.connect(self.btnQuit, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
@@ -551,15 +625,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         CRS = self.CRS
         CHUNK.crs = CRS
 
-#         print(project_folder)
-#         print(project_name)
-#         print(scalebars_path)
-#         print(georef_path)
-#         print(output_dir)
-#         print(generic_preselect)
-#         print(CRS)
-
         ###### 1. Align & Scale ######
+        self.boundaryCreation(CHUNK)
+        return
 
         # a. Align photos
         if(CHUNK.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
@@ -618,7 +686,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(not self.autoDetectMarkers and len(CHUNK.markers) == 0):
             print("Exiting script for manual referencing")
             self.reject()
-            return
 
         # b. build orthomosaic and DEM
         if(CHUNK.orthomosaic == None):
@@ -655,8 +722,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
 
         # export orthomosaic and DEM in full format
-        # WG: changed these to NOT clip the full outputs to bounding box. Future: add a shapefile export in here that defines boundary
-        # SM: remove export stage from workflow 1/30/23
         CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
                            source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
                            save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
@@ -667,7 +732,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                            save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
                            min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
 
-        CHUNK.exportShapes(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_boundary.shp", save_points=False, save_polylines=False, save_polygons=False,
+        CHUNK.exportShapes(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_boundary/" + project_name + "_" + CHUNK.label + "_boundary.shp", save_points=False, save_polylines=False, save_polygons=True,
                            format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
         # # export ortho and dem in blockwise format for Taglab
         # if(taglab_outputs):
@@ -689,9 +754,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.reject()
 
 
-
-
-    ######### Workflow Functions #########
+    ############# Workflow Functions #############
 
     def updateAndSave(self, doc):
         print("Saving Project...")
@@ -701,7 +764,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
     def createScalebars(self, chunk, path):
-
+        '''
+        Creates scalebars in the project's active chunk based on information from
+        a user-provided text file
+        '''
        iNumScaleBars=len(chunk.scalebars)
        iNumMarkers=len(chunk.markers)
        # Check for existing markers
@@ -716,50 +782,50 @@ class FullWorkflowDlg(QtWidgets.QDialog):
            eof = False
            line = file.readline()
            while not eof:
-              #split the line and load into variables
+              # split the line and load into variables
               point1, point2, dist, acc = line.split(",")
-              #find the corresponding scalebar, if there is any
-              scalebarfound=0
+              # find the corresponding scalebar, if there is any
+              scalebarfound = 0
               if (iNumScaleBars > 0):
                  for sbScaleBar in chunk.scalebars:
-                    strScaleBarLabel_1=point1+"_"+point2
-                    strScaleBarLabel_2=point2+"_"+point1
-                    if sbScaleBar.label==strScaleBarLabel_1 or sbScaleBar.label==strScaleBarLabel_2:
+                    strScaleBarLabel_1 = point1 + "_" + point2
+                    strScaleBarLabel_2 = point2 + "_" + point1
+                    if sbScaleBar.label == strScaleBarLabel_1 or sbScaleBar.label == strScaleBarLabel_2:
                        # scalebar found
-                       scalebarfound=1
+                       scalebarfound = 1
                        # update it
-                       sbScaleBar.reference.distance=float(dist)
-                       sbScaleBar.reference.accuracy=float(acc)
+                       sbScaleBar.reference.distance = float(dist)
+                       sbScaleBar.reference.accuracy = float(acc)
               # Check if scalebar was found
-              if (scalebarfound==0):
+              if (scalebarfound == 0):
                  # Scalebar was not found: add a new one
                  # Find Marker 1 with label described by "point1"
-                 bMarker1Found=0
+                 bMarker1Found = 0
                  for marker in chunk.markers:
                     if (marker.label == point1):
                        marker1 = marker
-                       bMarker1Found=1
+                       bMarker1Found = 1
                        break
                  # Find Marker 2 with label described by "point2"
-                 bMarker2Found=0
+                 bMarker2Found = 0
                  for marker in chunk.markers:
                     if (marker.label == point2):
                        marker2 = marker
-                       bMarker2Found=1
+                       bMarker2Found = 1
                        break
                  # Check if both markers were detected
-                 if bMarker1Found==1 and bMarker2Found==1:
+                 if bMarker1Found == 1 and bMarker2Found == 1:
                     # Markers were detected. Create new scalebar.
                     sbScaleBar = chunk.addScalebar(marker1,marker2)
                     # update it:
-                    sbScaleBar.reference.distance=float(dist)
-                    sbScaleBar.reference.accuracy=float(acc)
+                    sbScaleBar.reference.distance = float(dist)
+                    sbScaleBar.reference.accuracy = float(acc)
                  else:
                     # Marker not found. Raise exception and print, but do not stop process.
                     if (bMarker1Found == 0):
-                       print("Marker "+point1+" was not found!")
+                       print("Marker " + point1 + " was not found!")
                     if (bMarker2Found == 0):
-                       print("Marker "+point2+" was not found!")
+                       print("Marker " + point2 + " was not found!")
               #All done.
               #reading the next line in input file
               line = file.readline()
@@ -776,19 +842,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def referenceModel(self, chunk, path, _crs, formatting):
         '''
-        Imports marker georeferencing data from a csv
-        The file must be formatted in one of two ways, either with marker coordinate and accuracy info located in the column numbers specified below
-        or with all extemporaneous information (such as objectid) removed.
-
-        If the file is not already in the correct format, this function creates a new file that is formatted correctly and imports data from that file.
-        IMPORTANT: this function will raise an exception if the file has the wrong number of columns, but it cannot guarantee that the file is
-            formatted perfectly, ie that all the right information is in the right columns. The georeferencing should be inspected after this script is finished,
-            any errors will likely be obvious
+        Imports marker georeferencing data from a user-provided csv, for which
+        the user may specify the correct column arrangement. The function will raise
+        an exception if the referencing information is not numeric
 
         If the project already has georeferencing information, this information will be overwritten.
         '''
-
-
         # set indices for which columns lat/long data is in
         n = formatting[0] - 1
         x = formatting[1] - 1
@@ -808,13 +867,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             file = open(path)
             eof = False
             line = file.readline()
-            line = file.readline() # read second line in file, first line is column headers
+            # skip the specified number of rows when reading in data prior to reformatting
+            for i in range(0, skip):
+                line = file.readline()
 
-            # if(len(line.split(sep = ",")) == 6):
-            #     print("File is formatted correctly")
-            #     new_path = path
-
-            # elif(len(line.split(sep = ",")) >= 8):
             while not eof:
                 marker_ref = line.split(sep = ",")
                 ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[X], marker_ref[Y], marker_ref[Z]]
@@ -855,12 +911,14 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
     def gradSelectsOptimization(self, chunk):
-
-    # define thresholds for reconstruction uncertainty and projection accuracy
+        '''
+        Refines camera alignment by filtering out tie points with high error
+        '''
+        # define thresholds for reconstruction uncertainty and projection accuracy
         reconun = float(25)
         projecac = float(15)
 
-    # initiate filters, remote points above thresholds
+        # initiate filters, remove points above thresholds
         f = Metashape.TiePoints.Filter()
         f.init(chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
         f.removePoints(reconun)
@@ -869,7 +927,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         f.init(chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
         f.removePoints(projecac)
 
-    # optimize camera locations based on all distortion parameters
+        # optimize camera locations based on all distortion parameters
         chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True,
                               fit_b1=True, fit_b2=True, fit_k1=True,
                               fit_k2=True, fit_k3=True, fit_k4=True,
@@ -878,6 +936,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
     def create_shape_from_markers(self, marker_list, chunk):
+        '''
+        Creates a boundary shape from a given set of markers
+        '''
         if not chunk:
                 print("Empty project, script aborted")
                 return 0
@@ -904,24 +965,36 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         return 1
 
     def boundaryCreation(self, chunk):
+        '''
+        Wrapper function to create a boundary shape. Based on input from the user,
+        this function restricts the marker list provided to create_shape_from_markers()
+        such that the resulting shape will not be crossed into an hourglass shape if the
+        corner markers are positioned incorrectly.
+        '''
         m_list = []
-        for marker in chunk.markers:
-            m_list.append(marker)
+        for corner_num in self.corner_markers:
+            for marker in chunk.markers:
+                if(str(corner_num) == marker.label[-1]):
+                    m_list.append(marker)
         m_list_short = m_list[:4]
         self.create_shape_from_markers(m_list_short, chunk)
 
 
     def cleanProject(self, chunk):
-       ortho = chunk.orthomosaic
-       depthmaps = chunk.depth_maps
-       sparsecloud = chunk.tie_points
+        '''
+        Removes data that is no longer needed once the outputs have been created
+        in order to save storage space.
+        '''
+        ortho = chunk.orthomosaic
+        depthmaps = chunk.depth_maps
+        sparsecloud = chunk.tie_points
 
-       #remove key points(if present)
-       sparsecloud.removeKeypoints()
-       #remove depth maps (if present)
-       depthmaps.clear()
-       #remove orthophotos without removing orthomosaic
-       ortho.removeOrthophotos()
+        #remove key points(if present)
+        sparsecloud.removeKeypoints()
+        #remove depth maps (if present)
+        depthmaps.clear()
+        #remove orthophotos without removing orthomosaic
+        ortho.removeOrthophotos()
 
 
     # ----- Slots for Dialog Box -----
@@ -955,6 +1028,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.txtCRS.setPlainText(crs.name)
 
     def onReferenceChanged(self):
+        '''
+        Slot: When the user switches between using auto-detectable markers and not
+        using them via the comboReference combo box, this function enables or disables
+        all widgets related to the automatic referencing process.
+        '''
         self.autoDetectMarkers = self.comboReference.currentIndex()
         self.ref_format_groupbox.setEnabled(self.autoDetectMarkers)
 
@@ -967,6 +1045,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.labelGeoFile.setEnabled(self.autoDetectMarkers)
         self.btnGeoFile.setEnabled(self.autoDetectMarkers)
         self.txtGeoFile.setEnabled(self.autoDetectMarkers)
+
+        self.btnMarkerPosition.setEnabled(self.autoDetectMarkers)
 
         if (self.autoDetectMarkers):
             # self.CRS = self.defaultCRS
@@ -982,9 +1062,21 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 #             self.comboTargetType.setEnabled(True)
 
     def onResolutionChange(self):
+        '''
+        Slot: enables/disables the custom ortho resolution input box
+        '''
         use_default_res = self.checkBoxDefaultRes.isChecked()
         self.labelCustomRes.setEnabled(not use_default_res)
         self.spinboxCustomRes.setEnabled(not use_default_res)
+
+    def getMarkerPosition(self):
+        '''
+        Slot: Launches a sub-dialog box where the user can specify the arrangement of
+        corner markers.
+        '''
+        marker_dlg = BoundaryMarkerDlg(self)
+        self.corner_markers = marker_dlg.corner_markers
+        print(self.corner_markers)
 
 
 def run_script():
