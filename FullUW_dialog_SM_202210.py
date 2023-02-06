@@ -51,7 +51,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         super().__init__("Project Setup")
         self.parent = parent
         self.project_path = self.parent.doc.path
-        self.photo_folder = ""
+        self.photo_folder = "No folder selected"
         self.project_name = "Untitled"
         self.chunk_name = parent.chunk.label
 
@@ -67,7 +67,6 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         if(self.parent.project_name):
             self.project_name = self.parent.project_name
         self.txtProjectName.setPlainText(self.project_name)
-
         self.txtProjectName.setFixedHeight(40)
         self.txtProjectName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtProjectName.setReadOnly(True)
@@ -82,9 +81,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
         self.txtAddPhotos = QtWidgets.QPlainTextEdit()
         if(len(self.parent.chunk.cameras) > 0):
-            self.txtAddPhotos.setPlainText(str(len(self.parent.chunk.cameras)) + " cameras found. Select a folder if you would like to add more")
-        else:
-            self.txtAddPhotos.setPlainText("No folder selected")
+            self.photo_folder = str(len(self.parent.chunk.cameras)) + " cameras found. Select a folder if you would like to add more"
+        self.txtAddPhotos.setPlainText(self.photo_folder)
         self.txtAddPhotos.setFixedHeight(40)
         self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtAddPhotos.setReadOnly(True)
@@ -136,10 +134,11 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         Slot: gets a folder from which to add photos from the user, then adds the photos to the
         project's active chunk
         '''
-        self.photo_folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.parent.project_folder)
+        new_folder = QtWidgets.QFileDialog.getExistingDirectory(self, 'Open directory', self.parent.project_folder)
 
-        if(self.photo_folder):
+        if(new_folder):
             # add photos to active chunk
+            self.photo_folder = new_folder
             try:
                 image_list = os.listdir(self.photo_folder)
                 photo_list = list()
@@ -153,7 +152,6 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
                 Metashape.app.messageBox("Error adding photos")
                 return
         else:
-            self.txtAddPhotos.setPlainText("No File Selected")
             Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
 
 
