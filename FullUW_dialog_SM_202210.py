@@ -218,31 +218,46 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
         self.setWindowTitle("Corner Marker Positions")
 
         # ---- create widgets ----
-        self.labelCorner1 = QtWidgets.QLabel("Corner 1 target number: ")
+        self.labelCornerPositioning = QtWidgets.QLabel("Each auto-detectable marker is numbered with a " +
+                                        "unique integer. When setting up a plot, it is best to place the " +
+                                        "corner markers around the plot such that they are in numeric order " +
+                                        "going clockwise or counterclockwise, as shown as the default below. However, if the " +
+                                        "markers were placed in a different arrangement, you may specify that " +
+                                        "arrangement here. This will enable the script to draw the bounding " +
+                                        "box for the plot correctly.\n\n")
+        self.labelCornerPositioning.setToolTip("The orientation of the plot does not matter, only the relative " +
+                                        "positions of the markers around it.\nFor example, the default " +
+                                        "arrangement below could also be specified by setting the top-left to target " +
+                                        "4,\nthe top-right to target 3, the bottom-right to target 2, and the bottom-left " +
+                                        "to target 1")
+        self.labelCornerPositioning.setWordWrap(True)
+        # self.labelCornerPositioning.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.labelCorner1 = QtWidgets.QLabel("Top-left target number: ")
         self.spinboxCorner1 = QtWidgets.QSpinBox()
         self.spinboxCorner1.setMinimum(1)
 
-        self.labelCorner2 = QtWidgets.QLabel("Corner 2 target number: ")
+        self.labelCorner2 = QtWidgets.QLabel("Top-right target number: ")
         self.spinboxCorner2 = QtWidgets.QSpinBox()
         self.spinboxCorner2.setMinimum(1)
         self.spinboxCorner2.setValue(2)
 
-        self.labelCorner3 = QtWidgets.QLabel("Corner 3 target number: ")
+        self.labelCorner3 = QtWidgets.QLabel("Bottom-right target number: ")
         self.spinboxCorner3 = QtWidgets.QSpinBox()
         self.spinboxCorner3.setMinimum(1)
         self.spinboxCorner3.setValue(3)
 
-        self.labelCorner4 = QtWidgets.QLabel("Corner 4 target number: ")
+        self.labelCorner4 = QtWidgets.QLabel("Bottom-left target number: ")
         self.spinboxCorner4 = QtWidgets.QSpinBox()
         self.spinboxCorner4.setMinimum(1)
         self.spinboxCorner4.setValue(4)
 
         self.btnOk = QtWidgets.QPushButton("Ok")
-        self.btnOk.setFixedSize(90, 50)
+        self.btnOk.setFixedSize(70, 40)
         self.btnOk.setToolTip("Set Marker Positions")
 
         self.btnClose = QtWidgets.QPushButton("Close")
-        self.btnClose.setFixedSize(90, 50)
+        self.btnClose.setFixedSize(70, 40)
 
         # ---- create layouts to hold widgets ----
         corner1_layout = QtWidgets.QHBoxLayout()
@@ -265,15 +280,39 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
         ok_layout.addWidget(self.btnOk)
         ok_layout.addWidget(self.btnClose)
 
-        # ---- assemble layouts into main layout ----
-        mainLayout = QtWidgets.QVBoxLayout()
-        mainLayout.addLayout(corner1_layout)
-        mainLayout.addLayout(corner2_layout)
-        mainLayout.addLayout(corner3_layout)
-        mainLayout.addLayout(corner4_layout)
-        mainLayout.addLayout(ok_layout)
+        # create grid layout to arrange target inputs in a rectangle
+        plot_layout = QtWidgets.QGridLayout()
+        plot_layout.setColumnStretch(0, 1)
+        plot_layout.setColumnStretch(1, 10)
+        plot_layout.setColumnMinimumWidth(1, 150)
+        plot_layout.setColumnStretch(2, 1)
+        plot_layout.setRowStretch(0, 1)
+        plot_layout.setRowStretch(1, 10)
+        plot_layout.setRowMinimumHeight(1, 150)
+        plot_layout.setRowStretch(2, 1)
 
-        self.setLayout(mainLayout)
+        # create a groupbox to act as a plot rectangle
+        plot_groupbox = QtWidgets.QGroupBox()
+        plot_label = QtWidgets.QLabel("Reef Plot")
+        plot_label.setAlignment(QtCore.Qt.AlignCenter)
+        plot_label.setEnabled(False)
+
+        inner_layout = QtWidgets.QHBoxLayout()
+        inner_layout.addWidget(plot_label)
+        plot_groupbox.setLayout(inner_layout)
+
+        # ---- assemble layouts into main layout ----
+        main_layout = QtWidgets.QVBoxLayout()
+        main_layout.addWidget(self.labelCornerPositioning)
+        plot_layout.addLayout(corner1_layout, 0, 0)
+        plot_layout.addLayout(corner2_layout, 0, 2)
+        plot_layout.addWidget(plot_groupbox, 1, 1)
+        plot_layout.addLayout(corner3_layout, 2, 2)
+        plot_layout.addLayout(corner4_layout, 2, 0)
+        main_layout.addLayout(plot_layout)
+        main_layout.addLayout(ok_layout)
+
+        self.setLayout(main_layout)
 
         # ---- connect signals and slots ----
         self.btnOk.clicked.connect(self.ok)
@@ -768,20 +807,20 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         Creates scalebars in the project's active chunk based on information from
         a user-provided text file
         '''
-       iNumScaleBars=len(chunk.scalebars)
-       iNumMarkers=len(chunk.markers)
-       # Check for existing markers
-       if (iNumMarkers == 0):
-          raise Exception("No markers found! Unable to create scalebars.")
-       # Check for already existing scalebars
-       if (iNumScaleBars > 0):
-          print('There are already ',iNumScaleBars,' scalebars in this project.')
+        iNumScaleBars=len(chunk.scalebars)
+        iNumMarkers=len(chunk.markers)
+        # Check for existing markers
+        if (iNumMarkers == 0):
+            raise Exception("No markers found! Unable to create scalebars.")
+        # Check for already existing scalebars
+        if (iNumScaleBars > 0):
+            print('There are already ',iNumScaleBars,' scalebars in this project.')
 
-       try:
-           file = open(path)
-           eof = False
-           line = file.readline()
-           while not eof:
+        try:
+            file = open(path)
+            eof = False
+            line = file.readline()
+            while not eof:
               # split the line and load into variables
               point1, point2, dist, acc = line.split(",")
               # find the corresponding scalebar, if there is any
@@ -832,10 +871,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
               if not len(line):
                  eof = True
                  break
-           file.close()
-           print(" --- Scalebars Created --- ")
+            file.close()
+            print(" --- Scalebars Created --- ")
 
-       except:
+        except:
            return "Script error: There was a problem reading scalebar data\n"
 
 
@@ -1076,7 +1115,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         '''
         marker_dlg = BoundaryMarkerDlg(self)
         self.corner_markers = marker_dlg.corner_markers
-        print(self.corner_markers)
 
 
 def run_script():
