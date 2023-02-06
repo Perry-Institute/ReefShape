@@ -50,9 +50,10 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         # call parent constructor to initialize
         super().__init__("Project Setup")
         self.parent = parent
-        self.chunk_name = parent.chunk.label
         self.project_path = self.parent.doc.path
         self.photo_folder = ""
+        self.project_name = "Untitled"
+        self.chunk_name = parent.chunk.label
 
         # ---- create widgets ----
         self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
@@ -64,9 +65,9 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.btnProjectName = QtWidgets.QPushButton("Select File")
         self.txtProjectName = QtWidgets.QPlainTextEdit()
         if(self.parent.project_name):
-            self.txtProjectName.setPlainText(self.parent.project_name)
-        else:
-            self.txtProjectName.setPlainText("Untitled")
+            self.project_name = self.parent.project_name
+        self.txtProjectName.setPlainText(self.project_name)
+
         self.txtProjectName.setFixedHeight(40)
         self.txtProjectName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtProjectName.setReadOnly(True)
@@ -161,26 +162,24 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         Slot: gets project name from the user
         '''
         self.project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
-        self.project_name = path.basename(self.project_path)[:-4]
-        if(self.checkNaming(self.project_name) and self.project_name):
-            self.txtProjectName.setPlainText(self.project_name)
-        elif(not self.checkNaming(self.project_name)):
+        new_name = path.basename(self.project_path)[:-4]
+        if(self.checkNaming(new_name) and new_name):
+            self.project_name = new_name
+        elif(not self.checkNaming(new_name)):
             Metashape.app.messageBox("Unable to save project: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
-        else:
-            self.txtProjectName.setPlainText("No File Selected")
+
+        self.txtProjectName.setPlainText(self.project_name)
 
     def getChunkName(self):
         '''
         Slot to save chunk name
         '''
-        self.chunk_name, ok = QtWidgets.QInputDialog().getText(self, "Create Chunk", "Chunk name:")
-        if(self.checkNaming(self.chunk_name) and self.chunk_name and ok):
-            self.txtChunkName.setPlainText(self.chunk_name)
+        new_name, ok = QtWidgets.QInputDialog().getText(self, "Create Chunk", "Chunk name:")
+        if(self.checkNaming(new_name) and new_name and ok):
+            self.chunk_name = new_name
         elif(not self.checkNaming(self.chunk_name) and ok):
             Metashape.app.messageBox("Unable to create chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
-        else:
-            self.txtProjectName.setPlainText("No File Selected")
-
+        self.txtChunkName.setPlainText(self.chunk_name)
 
     def checkNaming(self, name):
         '''
