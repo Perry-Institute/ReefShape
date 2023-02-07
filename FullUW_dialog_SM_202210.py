@@ -196,6 +196,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         if(self.project_path):
             # save project with new name - if project already exists, the current project state will be saved as changes to it
             self.parent.doc.save(path = self.project_path)
+            self.parent.project_folder = path.dirname(self.project_path)
+            self.parent.project_name = path.basename(self.project_path)[:-4]
         else:
             Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
 
@@ -624,15 +626,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                                      "or georeferencing, the script will still create an orthomosaic and DEM, but these may be of lower quality.")
 
         # set constants
-        DOC = self.doc
-        CHUNK = self.chunk
         ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
         DM_QUALITY = 4 # quality setting for depth maps; corresponds to medium in GUI
         INTERPOLATION = Metashape.DisabledInterpolation # interpolation setting for DEM creation
 
         # set arguments from dialog box
-        project_folder = self.project_folder
-        project_name = self.project_name
         try:
             if(self.autoDetectMarkers):
                 scalebars_path = self.scalebars_path
@@ -643,7 +641,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.reject()
             return
 
-        output_dir = self.output_dir
         # taglab_outputs = self.checkBoxTagLab.isChecked()
         generic_preselect = self.checkBoxPreSelect.isChecked()
 
@@ -658,35 +655,32 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         ref_formatting = [self.spinboxRefLabel.value(), self.spinboxRefX.value(), self.spinboxRefY.value(), self.spinboxRefZ.value(),
                             self.spinboxXAcc.value(), self.spinboxYAcc.value(), self.spinboxZAcc.value(), self.spinboxSkipRows.value()]
 
-        CRS = self.CRS
-        CHUNK.crs = CRS
+        self.chunk.crs = self.CRS
 
         ###### 1. Align & Scale ######
-        self.boundaryCreation(CHUNK)
-        return
 
         # a. Align photos
-        if(CHUNK.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
-            CHUNK.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = generic_preselect,
+        if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
+            self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = generic_preselect,
                               reference_preselection=True, filter_mask=False, mask_tiepoints=True,
                               filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=False, guided_matching=False,
                               reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
-            CHUNK.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
+            self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
             print(" --- Cameras are aligned and sparse point cloud generated --- ")
-            self.updateAndSave(DOC)
+            self.updateAndSave()
 
 
         # b. detect markers
-        if(len(CHUNK.markers) == 0 and self.autoDetectMarkers): # detects markers only if there are none to start with - could change to threshold # of markers there should be, but i think makes most sense to leave as-is
-            CHUNK.detectMarkers(target_type = target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
+        if(len(self.chunk.markers) == 0 and self.autoDetectMarkers): # detects markers only if there are none to start with - could change to threshold # of markers there should be, but i think makes most sense to leave as-is
+            self.chunk.detectMarkers(target_type = target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
             print(" --- Markers Detected --- ")
 
         # c. scale model
-        if(len(CHUNK.scalebars) == 0 and self.autoDetectMarkers): # creates scalebars only if there are none already - ask Will if this makes sense
-            ref_except = self.referenceModel(CHUNK, georef_path, CRS, ref_formatting)
+        if(len(self.chunk.scalebars) == 0 and self.autoDetectMarkers): # creates scalebars only if there are none already - ask Will if this makes sense
+            ref_except = self.referenceModel(georef_path, ref_formatting)
             scale_except = ""
             if(not ref_except):
-                scale_except = self.createScalebars(CHUNK, scalebars_path)
+                scale_except = self.createScalebars(scalebars_path)
             # this structure is really clunky but I'm not sure what the best way to differentiate between sub-exceptions is without defining whole exception classes, which seems excessive
             error = ""
             if(scale_except or ref_except):
@@ -700,48 +694,48 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 self.reject()
                 return
             else:
-                CHUNK.updateTransform()
+                self.chunk.updateTransform()
 
 
-        if(CHUNK.model == None):
+        if(self.chunk.model == None):
             # d. optimize camera alignment - only optimize if there isn't already a model
-            self.gradSelectsOptimization(CHUNK)
+            self.gradSelectsOptimization(self.chunk)
             print( " --- Camera Optimization Complete --- ")
-            self.updateAndSave(DOC)
+            self.updateAndSave()
 
             ###### 2. Generate products ######
 
             # a. build mesh
-            CHUNK.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
-            CHUNK.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
+            self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
+            self.chunk.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
                              face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = False) # change this to false to avoid wasted space?
             print(" --- Mesh Generated --- ")
-            self.updateAndSave(DOC)
+            self.updateAndSave()
 
         # if not using automatic referencing, exit script after mesh creation
-        if(not self.autoDetectMarkers and len(CHUNK.markers) == 0):
+        if(not self.autoDetectMarkers and len(self.chunk.markers) == 0):
             print("Exiting script for manual referencing")
             self.reject()
 
         # b. build orthomosaic and DEM
-        if(CHUNK.orthomosaic == None):
-            CHUNK.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ModelData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
+        if(self.chunk.orthomosaic == None):
+            self.chunk.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ModelData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
                                    cull_faces=False, refine_seamlines=False, flip_x=False, flip_y=False, flip_z=False, subdivide_task=True,
                                    workitem_size_cameras=20, workitem_size_tiles=10, max_workgroup_size=100)
 
-        if(CHUNK.elevation == None):
-            CHUNK.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
+        if(self.chunk.elevation == None):
+            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
                            resolution=0, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
             print(" --- Orthomosaic and DEM Built --- ")
-            self.updateAndSave(DOC)
+            self.updateAndSave()
 
         # generate report
-        CHUNK.exportReport(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".pdf", title = project_name + " " + CHUNK.label,
-                           description = "Processing report for " + project_name + " on chunk " + CHUNK.label, font_size=12, page_numbers=True, include_system_info=True)
+        self.chunk.exportReport(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf", title = self.project_name + " " + self.chunk.label,
+                           description = "Processing report for " + self.project_name + " on chunk " + self.chunk.label, font_size=12, page_numbers=True, include_system_info=True)
 
         # c. create boundary
-        if(not CHUNK.shapes):
-            self.boundaryCreation(CHUNK)
+        if(not self.chunk.shapes):
+            self.boundaryCreation()
             print(" --- Boundary Polygon Created ---")
 
 
@@ -758,33 +752,33 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
 
         # export orthomosaic and DEM in full format
-        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
+        self.chunk.exportRaster(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".tif", resolution = ORTHO_RES,
                            source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
                            save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
                            min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
 
-        CHUNK.exportRaster(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
+        self.chunk.exportRaster(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
                            source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = jpg,
                            save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
                            min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
 
-        CHUNK.exportShapes(path = output_dir + "/" + project_name + "_" + CHUNK.label + "_boundary/" + project_name + "_" + CHUNK.label + "_boundary.shp", save_points=False, save_polylines=False, save_polygons=True,
+        self.chunk.exportShapes(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + "_boundary/" + self.project_name + "_" + self.chunk.label + "_boundary.shp", save_points=False, save_polylines=False, save_polygons=True,
                            format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
         # # export ortho and dem in blockwise format for Taglab
         # if(taglab_outputs):
-        #     CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + ".tif", resolution = ORTHO_RES,
+        #     self.chunk.exportRaster(path = self.output_dir + "/taglab_outputs/" + self.project_name + "_" + self.chunk.label + ".tif", resolution = ORTHO_RES,
         #                        source_data = Metashape.OrthomosaicData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
         #                        save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
         #                        min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
-        #     CHUNK.exportRaster(path = output_dir + "/taglab_outputs/" + project_name + "_" + CHUNK.label + "_DEM.tif", nodata_value = -5,
+        #     self.chunk.exportRaster(path = self.output_dir + "/taglab_outputs/" + self.project_name + "_" + self.chunk.label + "_DEM.tif", nodata_value = -5,
         #                        source_data = Metashape.ElevationData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
         #                        save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
         #                        min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='Orthomosaic', description='Generated by Agisoft Metashape')
         #
 
         ###### 4. Clean up project ######
-        # self.cleanProject(CHUNK)
-        self.updateAndSave(DOC)
+        # self.cleanProject(self.chunk)
+        self.updateAndSave()
         print("Script finished")
 
         self.reject()
@@ -792,20 +786,20 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     ############# Workflow Functions #############
 
-    def updateAndSave(self, doc):
+    def updateAndSave(self):
         print("Saving Project...")
         Metashape.app.update()
-        doc.save()
+        self.doc.save()
         print("Project Saved")
 
 
-    def createScalebars(self, chunk, path):
+    def createScalebars(self, path):
         '''
         Creates scalebars in the project's active chunk based on information from
         a user-provided text file
         '''
-        iNumScaleBars=len(chunk.scalebars)
-        iNumMarkers=len(chunk.markers)
+        iNumScaleBars=len(self.chunk.scalebars)
+        iNumMarkers=len(self.chunk.markers)
         # Check for existing markers
         if (iNumMarkers == 0):
             raise Exception("No markers found! Unable to create scalebars.")
@@ -823,7 +817,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
               # find the corresponding scalebar, if there is any
               scalebarfound = 0
               if (iNumScaleBars > 0):
-                 for sbScaleBar in chunk.scalebars:
+                 for sbScaleBar in self.chunk.scalebars:
                     strScaleBarLabel_1 = point1 + "_" + point2
                     strScaleBarLabel_2 = point2 + "_" + point1
                     if sbScaleBar.label == strScaleBarLabel_1 or sbScaleBar.label == strScaleBarLabel_2:
@@ -837,14 +831,14 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                  # Scalebar was not found: add a new one
                  # Find Marker 1 with label described by "point1"
                  bMarker1Found = 0
-                 for marker in chunk.markers:
+                 for marker in self.chunk.markers:
                     if (marker.label == point1):
                        marker1 = marker
                        bMarker1Found = 1
                        break
                  # Find Marker 2 with label described by "point2"
                  bMarker2Found = 0
-                 for marker in chunk.markers:
+                 for marker in self.chunk.markers:
                     if (marker.label == point2):
                        marker2 = marker
                        bMarker2Found = 1
@@ -852,7 +846,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                  # Check if both markers were detected
                  if bMarker1Found == 1 and bMarker2Found == 1:
                     # Markers were detected. Create new scalebar.
-                    sbScaleBar = chunk.addScalebar(marker1,marker2)
+                    sbScaleBar = self.chunk.addScalebar(marker1,marker2)
                     # update it:
                     sbScaleBar.reference.distance = float(dist)
                     sbScaleBar.reference.accuracy = float(acc)
@@ -876,7 +870,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
 
-    def referenceModel(self, chunk, path, _crs, formatting):
+    def referenceModel(self, path, formatting):
         '''
         Imports marker georeferencing data from a user-provided csv, for which
         the user may specify the correct column arrangement. The function will raise
@@ -936,8 +930,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 writer.writerows(ref)
 
             # import new georeferencing data
-            chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
-                                  crs = _crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
+            self.chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
+                                  crs = self.CRS, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
 
             os.remove(new_path)
             print(" --- Georeferencing Updated --- ")
@@ -946,7 +940,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
 
-    def gradSelectsOptimization(self, chunk):
+    def gradSelectsOptimization(self):
         '''
         Refines camera alignment by filtering out tie points with high error
         '''
@@ -956,43 +950,43 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # initiate filters, remove points above thresholds
         f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
+        f.init(self.chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
         f.removePoints(reconun)
 
         f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
+        f.init(self.chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
         f.removePoints(projecac)
 
         # optimize camera locations based on all distortion parameters
-        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True,
+        self.chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True,
                               fit_b1=True, fit_b2=True, fit_k1=True,
                               fit_k2=True, fit_k3=True, fit_k4=True,
                               fit_p1=True, fit_p2=True, fit_corrections=True,
                               adaptive_fitting=False, tiepoint_covariance=False)
 
 
-    def create_shape_from_markers(self, marker_list, chunk):
+    def create_shape_from_markers(self, marker_list):
         '''
         Creates a boundary shape from a given set of markers
         '''
-        if not chunk:
+        if not self.chunk:
                 print("Empty project, script aborted")
                 return 0
         if len(marker_list) < 3:
                 print("At least three markers required to create a polygon. Script aborted.")
                 return 0
 
-        T = chunk.transform.matrix
-        crs = chunk.crs
-        if not chunk.shapes:
-                chunk.shapes = Metashape.Shapes()
-                chunk.shapes.crs = chunk.crs
-        shape_crs = chunk.shapes.crs
+        T = self.chunk.transform.matrix
+        crs = self.chunk.crs
+        if not self.chunk.shapes:
+                self.chunk.shapes = Metashape.Shapes()
+                self.chunk.shapes.crs = self.chunk.crs
+        shape_crs = self.chunk.shapes.crs
 
 
         coords = [shape_crs.project(T.mulp(marker.position)) for marker in marker_list]
 
-        shape = chunk.shapes.addShape()
+        shape = self.chunk.shapes.addShape()
         shape.label = "Marker Boundary"
         shape.geometry.type = Metashape.Geometry.Type.PolygonType
         shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
@@ -1000,7 +994,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         return 1
 
-    def boundaryCreation(self, chunk):
+    def boundaryCreation(self):
         '''
         Wrapper function to create a boundary shape. Based on input from the user,
         this function restricts the marker list provided to create_shape_from_markers()
@@ -1009,21 +1003,21 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         '''
         m_list = []
         for corner_num in self.corner_markers:
-            for marker in chunk.markers:
+            for marker in self.chunk.markers:
                 if(str(corner_num) == marker.label[-1]):
                     m_list.append(marker)
         m_list_short = m_list[:4]
-        self.create_shape_from_markers(m_list_short, chunk)
+        self.create_shape_from_markers(m_list_short)
 
 
-    def cleanProject(self, chunk):
+    def cleanProject(self):
         '''
         Removes data that is no longer needed once the outputs have been created
         in order to save storage space.
         '''
-        ortho = chunk.orthomosaic
-        depthmaps = chunk.depth_maps
-        sparsecloud = chunk.tie_points
+        ortho = self.chunk.orthomosaic
+        depthmaps = self.chunk.depth_maps
+        sparsecloud = self.chunk.tie_points
 
         #remove key points(if present)
         sparsecloud.removeKeypoints()
