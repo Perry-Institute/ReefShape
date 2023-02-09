@@ -203,8 +203,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.corner_markers = self.georef_groupbox.corner_markers
         self.chunk.crs = self.CRS
 
-        self.boundaryCreation()
-        return
         ###### 1. Align & Scale ######
         # a. Align photos
         if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
