@@ -3,7 +3,7 @@ UI Component Classes for Underwater Workflow
 Sam Marshall
 
 This file contains class definitions for UI components used in the full workflow script (FullUW_dialog.py).
-and it cannot function as a standalone script.
+It cannot function as a standalone script.
 
 Note: if you edit this script after running a script that uses it in Metashape, your changes
 will likely not be reflected until you close Metashape and reopen it. This is (I think) because

@@ -8,6 +8,13 @@ It is a standalone script that is meant to be used in conjunction with the under
 implemented in FullUW_dialog.py. Once the user has collected two sets of photos, this script
 can be used to make sure the two sets line up before processing the second data set. The
 data from the first time point must be already processed before this script is used.
+
+The script works by exporting Metashape's estimated reference information for markers in the first
+time point at sub-millimeter precision, then using this information to georeference markers in the
+second time point (and subsequent data sets). Using high-precision estimated coordinates rather
+than the source coordinates enables Metashape to warp the data products from the second time point
+so that they align pixel-to-pixel with those from the first, even though the actual georeferencing
+(ie where on earth the reef is located) can never be that precise.
 '''
 
 import Metashape
@@ -18,14 +25,6 @@ import re
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, GeoreferenceGroupBox
 
-
-'''
-exportReference exports estimated locations for all of the markers in a given chunk, regardless
-of whether or not they are checked/used for georeferencing.
-    - Metashape can be set to skip markers that it doesnt find on import to get around this
-Still need to figure out a way to set the accuracy of the estimated locations
-    - can be set for individual markers via Metashape.app.document.chunk.markers[].reference.accuracy = []
-'''
 
 class AlignChunksDlg(QtWidgets.QDialog):
     def __init__(self, parent):

@@ -164,6 +164,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         print("Script started...")
         self.setEnabled(False)
 
+        ###### 0. Setting Parameters ######
         if(not self.georef_groupbox.autoDetectMarkers):
             Metashape.app.messageBox("Since you are not using auto-detectable markers for scaling and georeferencing, the script will exit after creating a mesh "
                                      "so that you may add georeferencing information by hand.\n\nOnce you have added scaling and georeferencing information, you may "
@@ -260,6 +261,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(not self.autoDetectMarkers and len(self.chunk.markers) == 0):
             print("Exiting script for manual referencing")
             self.reject()
+            return
 
         # b. build orthomosaic and DEM
         if(self.chunk.orthomosaic == None):
