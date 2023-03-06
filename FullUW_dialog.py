@@ -30,15 +30,13 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def __init__(self, parent):
         # set document info
         self.doc = Metashape.app.document
-        self.chunk = self.doc.chunk
-        self.project_folder = path.dirname(self.doc.path)
-        self.project_name = path.basename(self.doc.path)[:-4] # extracts project name from file path
+        self.project_folder = path.dirname(Metashape.app.document.path)
+        self.project_name = path.basename(Metashape.app.document.path)[:-4] # extracts project name from file path
         self.output_dir = self.project_folder
 
         # set default crs options
         self.localCRS = Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
         self.defaultCRS = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]')
-        self.CRS = self.chunk.crs
         self.autoDetectMarkers = False
         # set default corner marker arrangement
         self.corner_markers = [1, 2, 3, 4]
@@ -163,6 +161,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         '''
         print("Script started...")
         self.setEnabled(False)
+        self.chunk = Metashape.app.document.chunk
 
         ###### 0. Setting Parameters ######
         if(not self.georef_groupbox.autoDetectMarkers):
@@ -202,7 +201,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                             self.georef_groupbox.spinboxXAcc.value(), self.georef_groupbox.spinboxYAcc.value(),
                             self.georef_groupbox.spinboxZAcc.value(), self.georef_groupbox.spinboxSkipRows.value()]
         self.corner_markers = self.georef_groupbox.corner_markers
-        self.chunk.crs = self.CRS
+        if(self.chunk.tie_points and not self.chunk.meta['init_tie_points']):
+            self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
 
         ###### 1. Align & Scale ######
         # a. Align photos
@@ -212,6 +212,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                               filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=False, guided_matching=False,
                               reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
             self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
+            self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
             print(" --- Cameras are aligned and sparse point cloud generated --- ")
             self.updateAndSave()
 
@@ -243,14 +244,17 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         if(self.chunk.model == None):
-            # d. optimize camera alignment - only optimize if there isn't already a model
-            self.gradSelectsOptimization()
-            print( " --- Camera Optimization Complete --- ")
-            self.updateAndSave()
+            # d. optimize camera alignment - only optimize if there isn't already a model, and if the current
+            # number of tie points is not less than the inital number - prevents optimizing twice
+            if(not len(self.chunk.tie_points.points) < int(self.chunk.meta['init_tie_points'])):
+                self.gradSelectsOptimization()
+                print( " --- Camera Optimization Complete --- ")
+                self.updateAndSave()
 
             ###### 2. Generate products ######
-
             # a. build mesh
+            # reset reconstruction region to make sure the mesh gets built for the full plot
+            self.chunk.resetRegion()
             self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
             self.chunk.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
                              face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = False) # change this to false to avoid wasted space?
@@ -339,7 +343,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def updateAndSave(self):
         print("Saving Project...")
         Metashape.app.update()
-        self.doc.save()
+        Metashape.app.document.save()
         print("Project Saved")
 
 
@@ -481,7 +485,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
             # import new georeferencing data
             self.chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
-                                  crs = self.CRS, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
+                                  crs = self.chunk.crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
 
             os.remove(new_path)
             print(" --- Georeferencing Updated --- ")
@@ -522,8 +526,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if not self.chunk:
                 print("Empty project, script aborted")
                 return 0
-        if len(marker_list) < 3:
-                print("At least three markers required to create a polygon. Script aborted.")
+        if len(marker_list) < 4:
+                print("At least four markers required to create a plot. Boundary creation aborted.")
                 return 0
 
         T = self.chunk.transform.matrix
@@ -588,7 +592,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def getCRS(self):
         crs = Metashape.app.getCoordinateSystem("Select Coordinate System")
         if(crs):
-            self.CRS = crs
+            Metashape.app.document.chunk.crs = crs
             self.txtCRS.setPlainText(crs.name)
 
     def onResolutionChange(self):

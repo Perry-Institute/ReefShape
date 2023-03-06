@@ -37,10 +37,10 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         # call parent constructor to initialize
         super().__init__("Project Setup")
         self.parent = parent
-        self.project_path = self.parent.doc.path
+        self.project_path = Metashape.app.document.path
         self.photo_folder = "No folder selected"
         self.project_name = "Untitled"
-        self.chunk_name = parent.chunk.label
+        self.chunk_name = Metashape.app.document.chunk.label
 
         # ---- create widgets ----
         self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
@@ -49,7 +49,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.labelNamingConventions.setAlignment(QtCore.Qt.AlignCenter)
 
         self.labelProjectName = QtWidgets.QLabel("Project Name:")
-        self.btnProjectName = QtWidgets.QPushButton("Select File")
+        self.btnProjectName = QtWidgets.QPushButton("Create New")
         self.txtProjectName = QtWidgets.QPlainTextEdit()
         if(self.parent.project_name):
             self.project_name = self.parent.project_name
@@ -60,7 +60,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
         self.labelChunkName = QtWidgets.QLabel("Chunk Name:")
         self.btnChunkName = QtWidgets.QPushButton("Rename Chunk")
-        self.txtChunkName = QtWidgets.QPlainTextEdit(self.parent.chunk.label)
+        self.txtChunkName = QtWidgets.QPlainTextEdit(Metashape.app.document.chunk.label)
         self.txtChunkName.setFixedHeight(40)
         self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtChunkName.setReadOnly(True)
@@ -68,8 +68,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.labelAddPhotos = QtWidgets.QLabel("Add Photos:")
         self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
         self.txtAddPhotos = QtWidgets.QPlainTextEdit()
-        if(len(self.parent.chunk.cameras) > 0):
-            self.photo_folder = str(len(self.parent.chunk.cameras)) + " cameras found. Select a folder if you would like to add more"
+        if(len(Metashape.app.document.chunk.cameras) > 0):
+            self.photo_folder = str(len(Metashape.app.document.chunk.cameras)) + " cameras found. Select a folder if you would like to add more"
         self.txtAddPhotos.setPlainText(self.photo_folder)
         self.txtAddPhotos.setFixedHeight(40)
         self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
@@ -115,7 +115,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.btnAddPhotos.clicked.connect(self.getPhotoFolder)
         self.btnProjectName.clicked.connect(self.getProjectName)
         self.btnChunkName.clicked.connect(self.getChunkName)
-        self.btnCreateProj.clicked.connect(self.createProject)
+        self.btnCreateProj.clicked.connect(self.saveProject)
 
     def getPhotoFolder(self):
         '''
@@ -133,9 +133,9 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
                 for photo in image_list:
                     if photo.rsplit(".",1)[1].lower() in  ["jpg", "jpeg", "tif", "tiff"]:
                         photo_list.append(os.path.join(self.photo_folder, photo))
-                self.parent.chunk.addPhotos(photo_list)
+                Metashape.app.document.chunk.addPhotos(photo_list)
                 self.txtAddPhotos.setPlainText(self.photo_folder)
-                self.labelPhotosAdded.setText(str(len(photo_list)) + " images successfully added. Select another folder if you would like to add more")
+                self.labelPhotosAdded.setText(str(len(Metashape.app.document.chunk.cameras)) + " images successfully added. Select another folder if you would like to add more")
             except Exception as err:
                 Metashape.app.messageBox("Error adding photos")
                 return
@@ -147,12 +147,21 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         '''
         Slot: gets project name from the user
         '''
-        self.project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
-        new_name = os.path.basename(self.project_path)[:-4]
+        if(self.project_path): # if there is already a valid project name and path, save any changes so they ont get lost when the new project is made
+            Metashape.app.document.save(path = self.project_path)
+        project_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Open file', self.parent.project_folder, "Metashape Project (*.psx)")[0]
+        new_name = os.path.basename(project_path)[:-4]
         if(self.checkNaming(new_name) and new_name):
             self.project_name = new_name
+            self.project_path = project_path
+            self.parent.doc = Metashape.Document()
+            self.parent.doc.addChunk()
+            self.parent.doc.save(path = self.project_path)
+            Metashape.app.document.open(path = self.project_path)
+            self.txtAddPhotos.setPlainText("No folder selected")
+            self.labelPhotosAdded.setText("")
         elif(not self.checkNaming(new_name)):
-            Metashape.app.messageBox("Unable to save project: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
+            Metashape.app.messageBox("Unable to create project: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
 
         self.txtProjectName.setPlainText(self.project_name)
 
@@ -163,8 +172,9 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         new_name, ok = QtWidgets.QInputDialog().getText(self, "Create Chunk", "Chunk name:")
         if(self.checkNaming(new_name) and new_name and ok):
             self.chunk_name = new_name
+            Metashape.app.document.chunk.label = new_name
         elif(not self.checkNaming(new_name) and ok):
-            Metashape.app.messageBox("Unable to create chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
+            Metashape.app.messageBox("Unable to rename chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
         self.txtChunkName.setPlainText(self.chunk_name)
 
     def checkNaming(self, name):
@@ -175,15 +185,15 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             return False
         return True
 
-    def createProject(self):
+    def saveProject(self):
         '''
         Saves project to the designated path and renames the active chunk
         '''
-        self.parent.chunk.label = self.chunk_name
+        Metashape.app.document.chunk.label = self.chunk_name
 
         if(self.project_path):
             # save project with new name - if project already exists, the current project state will be saved as changes to it
-            self.parent.doc.save(path = self.project_path)
+            Metashape.app.document.save(path = self.project_path)
             self.parent.project_folder = os.path.dirname(self.project_path)
             self.parent.project_name = os.path.basename(self.project_path)[:-4]
         else:
@@ -205,8 +215,6 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
     [top-left, top-right, bottom-right, bottom-left]
     '''
     def __init__(self, parent):
-        self.chunk = parent.chunk
-        self.crs = parent.CRS
         self.corner_markers = [] # initialize return value to empty list
 
         # initialize main dialog window
@@ -229,24 +237,25 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
         self.labelCornerPositioning.setWordWrap(True)
         # self.labelCornerPositioning.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.labelCorner1 = QtWidgets.QLabel("Top-left target number: ")
+        self.labelCorner1 = QtWidgets.QLabel("NW target number: ")
         self.spinboxCorner1 = QtWidgets.QSpinBox()
         self.spinboxCorner1.setMinimum(1)
+        self.spinboxCorner1.setValue(4)
 
-        self.labelCorner2 = QtWidgets.QLabel("Top-right target number: ")
+        self.labelCorner2 = QtWidgets.QLabel("NE target number: ")
         self.spinboxCorner2 = QtWidgets.QSpinBox()
         self.spinboxCorner2.setMinimum(1)
-        self.spinboxCorner2.setValue(2)
+        self.spinboxCorner2.setValue(1)
 
-        self.labelCorner3 = QtWidgets.QLabel("Bottom-right target number: ")
+        self.labelCorner3 = QtWidgets.QLabel("SE target number: ")
         self.spinboxCorner3 = QtWidgets.QSpinBox()
         self.spinboxCorner3.setMinimum(1)
-        self.spinboxCorner3.setValue(3)
+        self.spinboxCorner3.setValue(2)
 
-        self.labelCorner4 = QtWidgets.QLabel("Bottom-left target number: ")
+        self.labelCorner4 = QtWidgets.QLabel("SW target number: ")
         self.spinboxCorner4 = QtWidgets.QSpinBox()
         self.spinboxCorner4.setMinimum(1)
-        self.spinboxCorner4.setValue(4)
+        self.spinboxCorner4.setValue(3)
 
         self.btnOk = QtWidgets.QPushButton("Ok")
         self.btnOk.setFixedSize(70, 40)
@@ -344,8 +353,6 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
     def __init__(self, parent):
         super().__init__("Georeferencing")
         self.parent = parent
-        self.project_path = self.parent.doc.path
-        self.chunk = self.parent.chunk
         self.autoDetectMarkers = False
         # set default corner marker arrangement
         self.corner_markers = [1, 2, 3, 4]
@@ -405,32 +412,33 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         self.labelRefLabel = QtWidgets.QLabel("Label:")
         self.spinboxRefLabel = QtWidgets.QSpinBox()
         self.spinboxRefLabel.setMinimum(1)
+        self.spinboxRefLabel.setValue(4)
 
         self.labelRefX = QtWidgets.QLabel("Long (X):")
         self.spinboxRefX = QtWidgets.QSpinBox()
         self.spinboxRefX.setMinimum(1)
-        self.spinboxRefX.setValue(3)
+        self.spinboxRefX.setValue(6)
 
         self.labelRefY = QtWidgets.QLabel("Lat (Y):")
         self.spinboxRefY = QtWidgets.QSpinBox()
         self.spinboxRefY.setMinimum(1)
-        self.spinboxRefY.setValue(2)
+        self.spinboxRefY.setValue(5)
 
         self.labelRefZ = QtWidgets.QLabel("Depth (Z):")
         self.spinboxRefZ = QtWidgets.QSpinBox()
         self.spinboxRefZ.setMinimum(1)
-        self.spinboxRefZ.setValue(4)
+        self.spinboxRefZ.setValue(7)
 
         self.labelAccuracy = QtWidgets.QLabel("Accuracy")
         self.spinboxXAcc = QtWidgets.QSpinBox()
         self.spinboxXAcc.setMinimum(1)
-        self.spinboxXAcc.setValue(5)
+        self.spinboxXAcc.setValue(8)
         self.spinboxYAcc = QtWidgets.QSpinBox()
         self.spinboxYAcc.setMinimum(1)
-        self.spinboxYAcc.setValue(5)
+        self.spinboxYAcc.setValue(8)
         self.spinboxZAcc = QtWidgets.QSpinBox()
         self.spinboxZAcc.setMinimum(1)
-        self.spinboxZAcc.setValue(6)
+        self.spinboxZAcc.setValue(9)
 
         self.labelSkipRows = QtWidgets.QLabel("Start import at row:")
         self.spinboxSkipRows = QtWidgets.QSpinBox()

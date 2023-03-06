@@ -18,7 +18,7 @@ def boundary_creation():
                 if len(marker_list) < 3:
                         print("At least three markers required to create a polygon. Script aborted.")
                         return 0
-		
+
                 T = chunk.transform.matrix
                 crs = chunk.crs
                 if not chunk.shapes:
@@ -34,7 +34,7 @@ def boundary_creation():
                 shape.geometry.type = Metashape.Geometry.Type.PolygonType
                 shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
                 shape.geometry = Metashape.Geometry.Polygon(coords)
-	
+
                 print("Script finished.")
                 return 1
 
