@@ -12,17 +12,18 @@ def clean_project():
    chunk = doc.chunk
    ortho = chunk.orthomosaic
    depthmaps = chunk.depth_maps
-   sparsecloud = chunk.point_cloud
-   
+   sparsecloud = chunk.tie_points
+
    #remove key points(if present)
    sparsecloud.removeKeypoints()
    #remove depth maps (if present)
    depthmaps.clear()
    #remove orthophotos without removing orthomosaic
    ortho.removeOrthophotos()
-   
+
    Metashape.app.update()
-   
+   Metashape.app.document.save()
+
    print("Script finished")
 label = "Custom/Clean Project"
 Metashape.app.addMenuItem(label, clean_project)

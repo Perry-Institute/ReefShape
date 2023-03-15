@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<batchjobs version="1.8.4">
+<batchjobs version="2.0">
   <job name="ExportOrthomosaic" target="list" chunks="0">
     <block_height>32767</block_height>
     <block_width>32767</block_width>

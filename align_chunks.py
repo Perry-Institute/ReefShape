@@ -171,13 +171,15 @@ class AlignChunksDlg(QtWidgets.QDialog):
         est_ref_path = os.path.join(self.project_folder, self.reference_chunk.label + "_est_ref.csv")
         # export estimated reference from old chunk - in decimal degrees, 9 decimal places is about 0.1mm
         self.reference_chunk.exportReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV,
-                            items = Metashape.ReferenceItemsMarkers, columns = 'nuvwUVW', delimiter = ",", precision = 9)
+                            items = Metashape.ReferenceItemsMarkers, columns = 'nouvwUVW', delimiter = ",", precision = 9)
+
+        self.correctEnabledMarkers(est_ref_path)
 
         # detect markers in new chunk
         self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
 
         # import reference to new chunk
-        self.chunk.importReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyz", skip_rows = 2,
+        self.chunk.importReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "noxyz", skip_rows = 1,
                               crs = self.reference_chunk.crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
 
         # adjust accuracy for damaged markers - accuracy is set in meters
@@ -283,6 +285,39 @@ class AlignChunksDlg(QtWidgets.QDialog):
         target_type_index = self.comboTargetType.currentIndex()
         self.target_type = self.targetTypes[target_type_index][1]
 
+
+    def correctEnabledMarkers(self, path):
+        '''
+        Edits the estimated reference file so that only markers used for georeferencing in
+        time point 1 are used to align time point 2.
+        Currently, this functionality is broken in metashape, and all markers are marked as
+        enabled.
+        '''
+        # read in raw georeferencing data and put it in a list
+        file = open(path)
+        eof = False
+        header = file.readline() # skip first header containing crs info
+        header = file.readline()
+        ref = [header.split(sep = ",")] # save second header line containing column headers
+        line = file.readline()
+        index = 0 # use marker index to match file lines with markers - Metashape exports markers in the order of their indices
+
+        while not eof:
+            marker_ref = line.split(sep = ",")
+            if(self.reference_chunk.markers[index].reference.enabled):
+                ref.append(marker_ref)
+            # marker_ref[1] = int(self.reference_chunk.markers[index].reference.enabled) # rewrite enabled flag
+            line = file.readline()
+            index += 1
+            if (index >= len(self.reference_chunk.markers) or not len(line)):
+                eof = True
+                break
+        file.close()
+        # write edited reference info back to the file
+        with open(path, 'w', newline = '') as f:
+            writer = csv.writer(f)
+            writer.writerows(ref)
+        f.close()
 
     # END CLASS AlignChunksDlg
 def run_script():
