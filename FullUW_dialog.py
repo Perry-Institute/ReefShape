@@ -296,11 +296,13 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         jpg = Metashape.ImageCompression()
         jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG
         jpg.jpeg_quality = 90
-        jpg.tiff_big = True
+        jpg.tiff_big = False
+        jpg.tiff_overviews = True
 
         lzw = Metashape.ImageCompression()
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
-        lzw.tiff_big = True
+        lzw.tiff_big = False
+        lzw.tiff_overviews = True
 
         # export orthomosaic and DEM in full format
         self.chunk.exportRaster(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".tif", resolution = ORTHO_RES,
