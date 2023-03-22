@@ -11,6 +11,7 @@ Desired Features:
 - (eventually) include a checkbox to keep depth maps for radiometric corrections
 - add Will's method for improving alignment (keeping key points, sequential preselection, etc)
   - probably include a target threshold for camera alignment before using this method - ie if <90% of the cameras align the first go around, do it again with another method (maybe also with lower accuracy or something) to try to align the rest
+- check for existing files to avoid duplicate/redoing exports
 
 Known Problems:
 - ui scaling gets messed up, esp on mac - main window is too big, and some of the buttons get clipped too small

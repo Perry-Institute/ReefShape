@@ -76,7 +76,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.txtAddPhotos.setReadOnly(True)
 
         self.btnCreateProj = QtWidgets.QPushButton("Save Project")
-        self.btnCreateProj.setFixedWidth(75)
+        # self.btnCreateProj.setFixedWidth(75)
 
         self.labelPhotosAdded = QtWidgets.QLabel()
 
