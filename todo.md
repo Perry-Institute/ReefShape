@@ -11,12 +11,8 @@ Desired Features:
 - (eventually) include a checkbox to keep depth maps for radiometric corrections
 - add Will's method for improving alignment (keeping key points, sequential preselection, etc)
   - probably include a target threshold for camera alignment before using this method - ie if <90% of the cameras align the first go around, do it again with another method (maybe also with lower accuracy or something) to try to align the rest
-- check for existing files to avoid duplicate/redoing exports
 
 Known Problems:
-- ui scaling gets messed up, esp on mac - main window is too big, and some of the buttons get clipped too small
-    - remove/edit fixed size policy on those buttons
-    - look into scaling main window dynamically based on display size
 - adding photos through the dialog box doesn't work if there are raw files alongside others - unsure of how extensive/problematic this is
     - seems to not be an issue with most raw file extensions, including .raw files, so idk what was going on with Will's
     - maybe just isn't reliable on mac
