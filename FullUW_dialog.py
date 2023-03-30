@@ -153,6 +153,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         scroll_layout = QtWidgets.QVBoxLayout()
         scroll_layout.addWidget(scroll_area)
         scroll_layout.addLayout(ok_layout) # place run and close buttons outside of scroll area so theyre always visible
+        ok_layout.setEnabled(True)
         self.setLayout(scroll_layout) # set wrapper layout for scroll area as main dialog layout
 
         # adjust size and position of main widget
