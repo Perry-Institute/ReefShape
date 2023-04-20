@@ -63,12 +63,18 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.checkBoxPreSelect.setToolTip("Generic preselection speeds up photo alignment, but for photo sets with severe caustics disabling it can make alignment more effective")
 
         # set orthomosaic resolution
-        self.checkBoxDefaultRes = QtWidgets.QCheckBox("Use Metashape default resolution")
+        self.checkBoxDefaultRes = QtWidgets.QCheckBox("Use default resolution")
         self.checkBoxDefaultRes.setToolTip("If this option is enabled, Metashape will calculate the orthomosaic resolution based on the ")
         self.labelCustomRes = QtWidgets.QLabel("Custom Resolution (m): ")
         self.spinboxCustomRes = QtWidgets.QDoubleSpinBox()
         self.spinboxCustomRes.setDecimals(5)
         self.spinboxCustomRes.setValue(0.0005)
+
+        # set mesh quality
+        self.labelMeshQuality = QtWidgets.QLabel("Mesh Quality")
+        self.comboMeshQuality = QtWidgets.QComboBox()
+        self.comboMeshQuality.addItems(["Ultra High", "High", "Medium", "Low", "Lowest"])
+        self.comboMeshQuality.setCurrentIndex(2)
 
         # SM: remove export option 1/30/23
         # # taglab outputs
@@ -107,10 +113,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         crs_layout.addWidget(self.btnCRS)
 
         checkbox_layout = QtWidgets.QHBoxLayout()
+
         checkbox_layout.addWidget(self.checkBoxPreSelect)
+        checkbox_layout.addStretch()
         checkbox_layout.addWidget(self.checkBoxDefaultRes)
-        checkbox_layout.addWidget(self.labelCustomRes)
-        checkbox_layout.addWidget(self.spinboxCustomRes)
+        resolution_layout = QtWidgets.QHBoxLayout()
+        resolution_layout.addWidget(self.labelMeshQuality)
+        resolution_layout.addWidget(self.comboMeshQuality)
+        resolution_layout.addStretch()
+        resolution_layout.addWidget(self.labelCustomRes)
+        resolution_layout.addWidget(self.spinboxCustomRes)
         # checkbox_layout.addWidget(self.checkBoxTagLab)
 
         output_layout = QtWidgets.QHBoxLayout()
@@ -128,6 +140,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         general_layout = QtWidgets.QVBoxLayout()
         general_layout.addLayout(crs_layout)
         general_layout.addLayout(checkbox_layout)
+        general_layout.addLayout(resolution_layout)
         general_layout.addLayout(output_layout)
         general_groupbox.setLayout(general_layout)
 
@@ -196,7 +209,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # set constants
         ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
-        DM_QUALITY = 4 # quality setting for depth maps; corresponds to medium in GUI
+        DM_QUALITY = 2 ** self.comboMeshQuality.currentIndex() # quality setting for depth maps; corresponds to medium in GUI
         INTERPOLATION = Metashape.DisabledInterpolation # interpolation setting for DEM creation
 
         # set arguments from dialog box
