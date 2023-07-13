@@ -44,7 +44,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
         # ---- create widgets ----
         self.labelNamingConventions = QtWidgets.QLabel("Select a project and chunk name. To ensure consistency, we suggest "
-                                                        "using the AGRRA site code\nas the project name and the date the data "
+                                                        "using the site name\nas the project name and the date the data "
                                                         "was collected (in YYYYMMDD format) as the chunk name.")
         self.labelNamingConventions.setAlignment(QtCore.Qt.AlignCenter)
 
