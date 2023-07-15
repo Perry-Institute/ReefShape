@@ -243,6 +243,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(self.chunk.tie_points and not self.chunk.meta['init_tie_points']):
             self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
 
+
         ###### 1. Align & Scale ######
         # a. Align photos
         if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
@@ -499,7 +500,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 line = file.readline()
 
             while not eof:
-                marker_ref = line.split(sep = ",")
+                marker_ref = line.strip().split(sep = ",")
                 ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[X], marker_ref[Y], marker_ref[Z]]
                 for item in ref_line[1:]:
                     try:
@@ -517,6 +518,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 if not len(line):
                      eof = True
                      break
+
             file.close()
 
             header = ["label", "x", "y", "z", "X_acc", "Y_acc", "Z_acc"]
