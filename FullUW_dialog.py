@@ -307,9 +307,11 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             # a. build mesh
             # reset reconstruction region to make sure the mesh gets built for the full plot
             self.chunk.resetRegion()
+	    self.updateAndSave()
             self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
+	    self.updateAndSave()
             self.chunk.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
-                             face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = False) # change this to false to avoid wasted space?
+                             face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = True) # change this to false to avoid wasted space?
             print(" --- Mesh Generated --- ")
             self.updateAndSave()
 
