@@ -1,5 +1,5 @@
-# Metashape_Reef
-Agisoft Metashape scripts for underwater Large Area Imaging.
+# Metashape Reef
+Agisoft Metashape scripts for underwater Large Area Imaging, developed specifically for efficiently processing coral reef photomosaics by Sam Marshall and Will Greene at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>.
 
 ## Intro
 This is a collection of scripts for use in Agisoft Metashape. Please note that this is still very much a work in progress - if you're accessing this currently, <b> please do not share it widely quite yet! </b> If you want to learn more or are having trouble using any of the scripts, email wgreene@perryinstitute.org and I'll get back to you as soon as I can.
