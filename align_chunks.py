@@ -176,7 +176,8 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.correctEnabledMarkers(est_ref_path)
 
         # detect markers in new chunk
-        self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
+        if(len(self.chunk.markers) == 0): # only detect markers if there are currently no markers in selected chunk
+            self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
 
         # import reference to new chunk
         self.chunk.importReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "noxyz", skip_rows = 1,
