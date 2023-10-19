@@ -330,7 +330,9 @@ def run_script():
 
 
 # add function to menu
-label = "Custom/Align Chunks"
+label_old = "Custom/Align Chunks"
+label = "Custom/Align Timepoints"
+Metashape.app.removeMenuItem(label_old)
 Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, run_script)
 print("To execute this script press {}".format(label))
