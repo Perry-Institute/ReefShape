@@ -176,7 +176,8 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.correctEnabledMarkers(est_ref_path)
 
         # detect markers in new chunk
-        self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
+        if(len(self.chunk.markers) == 0): # only detect markers if there are currently no markers in selected chunk
+            self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
 
         # import reference to new chunk
         self.chunk.importReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "noxyz", skip_rows = 1,
@@ -329,7 +330,9 @@ def run_script():
 
 
 # add function to menu
-label = "Custom/Align Chunks"
+label_old = "Custom/Align Chunks"
+label = "Custom/Align Timepoints"
+Metashape.app.removeMenuItem(label_old)
 Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, run_script)
 print("To execute this script press {}".format(label))
