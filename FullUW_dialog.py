@@ -261,10 +261,30 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
             self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = generic_preselect,
                               reference_preselection=True, filter_mask=False, mask_tiepoints=True,
-                              filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=False, guided_matching=False,
+                              filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=True, guided_matching=False,
                               reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
             self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
             self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
+            self.updateAndSave()
+            print(" --- Initial alignment completed -- Refining alignment --- ")
+
+            unaligned_photo_paths = []
+
+            for camera in self.chunk.cameras:
+                if not camera.transform: # Check if the camera is not aligned
+                    unaligned_photo_paths.append(camera.photo.path)
+                    self.chunk.remove([camera]) # Remove unaligned cameras from the chunk
+
+            self.chunk.addPhotos(unaligned_photo_paths)
+
+            # rerun alignment without generic preselection
+            self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = False,
+                              reference_preselection=True, filter_mask=False, mask_tiepoints=True,
+                              filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=True, guided_matching=False,
+                              reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
+            self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
+
+
             print(" --- Cameras are aligned and sparse point cloud generated --- ")
             self.updateAndSave()
 
@@ -331,9 +351,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             print(" --- Orthomosaic and DEM Built --- ")
             self.updateAndSave()
 
-        # generate report
-        self.chunk.exportReport(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf", title = self.project_name + " " + self.chunk.label,
-                           description = "Processing report for " + self.project_name + " on chunk " + self.chunk.label, font_size=12, page_numbers=True, include_system_info=True)
 
         # c. create boundary
         if(not self.chunk.shapes):
@@ -376,6 +393,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 os.mkdir(shape_dir)
             self.chunk.exportShapes(path = os.path.join(shape_dir, self.project_name + "_" + self.chunk.label + "_boundary.shp"), save_points=False, save_polylines=False, save_polygons=True,
                                format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
+
+            # generate report
+            self.chunk.exportReport(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf", title = self.project_name + " " + self.chunk.label,
+                               description = "Processing report for " + self.project_name + " on chunk " + self.chunk.label, font_size=12, page_numbers=True, include_system_info=True)
 
         # export ortho and dem in blockwise format for Taglab
         if(self.checkBoxTagLab.isChecked()):
