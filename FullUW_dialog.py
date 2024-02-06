@@ -214,10 +214,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         ###### 0. Setting Parameters ######
         if(not self.georef_groupbox.autoDetectMarkers and self.chunk.model == None):
-            Metashape.app.messageBox("Since you are not using auto-detectable markers for scaling and georeferencing, the script will exit after creating a mesh "
-                                     "so that you may add georeferencing information by hand.\n\nOnce you have added scaling and georeferencing information, you may "
-                                     "run the script again in order to complete the ramainder of the workflow\n\nIf you run the script again without scaling "
-                                     "or georeferencing, the script will still create an orthomosaic and DEM, but these may be of lower quality.")
+            Metashape.app.messageBox("You have initiated the script without specifying georeferencing information. If you ran the align timepoints script first, "
+                                    "clicking OK will simply complete the workflow in its entirety for you (no further action needed). \n\n If this is a new project "
+                                    "without auto-detectable markers, the script will exit after creating a mesh to allow for manual referencing, leveling, "
+                                    "and scaling. \n\n Once this information is added, run the script again to complete the remainder of the workflow.")
 
         # set constants
         ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
@@ -330,7 +330,19 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             # reset reconstruction region to make sure the mesh gets built for the full plot
             self.chunk.resetRegion()
             self.updateAndSave()
-            self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
+            # try 'task' syntax to enable hidden preferences (ie pm_enable) to be changed
+            task = Metashape.Tasks.BuildDepthMaps()
+            task.downscale = DM_QUALITY
+            task.filter_mode = Metashape.FilterMode.MildFiltering
+            task.reuse_depth = True
+            task.max_neighbors = 16
+            task.subdivide_task = True
+            task.workitem_size_cameras = 20
+            task.max_workgroup_size = 100
+            task["pm_enable"] = "1"
+            task.apply(self.chunk)
+
+            #self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
             self.updateAndSave()
             self.chunk.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
                              face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = True) # change this to false to avoid wasted space?
@@ -654,19 +666,19 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         Removes data that is no longer needed once the outputs have been created
         in order to save storage space.
         '''
-        
+
         sparsecloud = self.chunk.tie_points
         #remove key points(if present)
         sparsecloud.removeKeypoints()
-        
+
         ortho = self.chunk.orthomosaic
         #remove orthophotos without removing orthomosaic
         ortho.removeOrthophotos()
-        
+
         depthmaps = self.chunk.depth_maps
         #remove depth maps (if present)
         depthmaps.clear()
-        
+
         #update Oct 2023: changed order so that script still works properly if no depth maps or ortho is present
 
 
