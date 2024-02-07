@@ -270,22 +270,22 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.updateAndSave()
             print(" --- Initial alignment completed -- Refining alignment --- ")
 
+            # remove and re-add unaligned photos to try to align them
             unaligned_photo_paths = []
-
             for camera in self.chunk.cameras:
                 if not camera.transform: # Check if the camera is not aligned
                     unaligned_photo_paths.append(camera.photo.path)
                     self.chunk.remove([camera]) # Remove unaligned cameras from the chunk
 
-            self.chunk.addPhotos(unaligned_photo_paths)
-
+            if unaligned_photo_paths: # only try to add photos if list of paths is not empty
+                self.chunk.addPhotos(unaligned_photo_paths)
+                
             # rerun alignment without generic preselection
             self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = False,
                               reference_preselection=True, filter_mask=False, mask_tiepoints=True,
                               filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=True, guided_matching=False,
                               reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
             self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
-
 
             print(" --- Cameras are aligned and sparse point cloud generated --- ")
             self.updateAndSave()
