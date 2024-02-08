@@ -10,17 +10,20 @@ import Metashape
 def clean_project():
    doc = Metashape.app.document
    chunk = doc.chunk
-   ortho = chunk.orthomosaic
-   depthmaps = chunk.depth_maps
-   sparsecloud = chunk.tie_points
 
-   #remove key points(if present)
-   sparsecloud.removeKeypoints()
-   #remove depth maps (if present)
-   depthmaps.clear()
+
    #remove orthophotos without removing orthomosaic
+   ortho = chunk.orthomosaic
    ortho.removeOrthophotos()
 
+   #remove key points(if present)
+   sparsecloud = chunk.tie_points
+   sparsecloud.removeKeypoints()
+
+   #remove depth maps (if present)
+   depthmaps = chunk.depth_maps
+   depthmaps.clear()
+   
    Metashape.app.update()
    Metashape.app.document.save()
 
