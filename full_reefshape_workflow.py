@@ -717,7 +717,7 @@ def run_script():
 
 
 # add function to menu
-label = "ReefShape/Full Reefshape Workflow"
+label = "ReefShape/Full ReefShape Workflow"
 Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, run_script)
 print("To execute this script press {}".format(label))
