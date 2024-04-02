@@ -6,15 +6,12 @@
 # csv file format:
 # Marker_1_label,Marker_2_label,distance,accuracy
 # ex:
-# point 1,point 2,9.903500,0.002000
-# point 2,point 3,9.949000,0.002000
-# point 3,point 4,9.913000,0.002000
-
-# location for scalebar CSV: C:\Program Files\Agisoft\Metashape Pro\scalebars\
+# target 5,target 6,0.4965,0.00025
+# target 7,target 8,0.4975,0.00025
+# target 9,target 10,0.4985,0.00025
 
 # PS: no additional spaces should be inserted
 
-# tested in Metashape 1.8 (Windows 64)
 
 # This script was based on a script for creating scalebars in Photoscan available at:
 # http://hairystickman.co.uk/photoscan-scale-bars/
@@ -97,6 +94,6 @@ def Create_Scalebars():
    file.close()
    Metashape.app.update()
    print("Script finished")
-label = "Custom/Create Scalebars from Targets"
+label = "ReefShape/Create Scalebars from Targets"
 Metashape.app.addMenuItem(label, Create_Scalebars)
 

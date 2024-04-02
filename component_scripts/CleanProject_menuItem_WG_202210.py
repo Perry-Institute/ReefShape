@@ -8,25 +8,28 @@
 import Metashape
 
 def clean_project():
-   doc = Metashape.app.document
-   chunk = doc.chunk
+    doc = Metashape.app.document
+    chunk = doc.chunk
 
+    # Remove orthophotos without removing orthomosaic
+    ortho = chunk.orthomosaic
+    if ortho:
+        ortho.removeOrthophotos()
 
-   #remove orthophotos without removing orthomosaic
-   ortho = chunk.orthomosaic
-   ortho.removeOrthophotos()
+    # Remove key points (if present)
+    sparsecloud = chunk.tie_points
+    if sparsecloud:
+        sparsecloud.removeKeypoints()
 
-   #remove key points(if present)
-   sparsecloud = chunk.tie_points
-   sparsecloud.removeKeypoints()
-
-   #remove depth maps (if present)
-   depthmaps = chunk.depth_maps
-   depthmaps.clear()
+    # Remove depth maps (if present)
+    depthmaps = chunk.depth_maps
+    if depthmaps:
+        depthmaps.clear()
    
-   Metashape.app.update()
-   Metashape.app.document.save()
+    Metashape.app.update()
+    Metashape.app.document.save()
 
-   print("Script finished")
-label = "Custom/Clean Project"
+    print("Script finished")
+
+label = "ReefShape/Clean Project"
 Metashape.app.addMenuItem(label, clean_project)

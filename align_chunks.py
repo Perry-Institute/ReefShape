@@ -331,7 +331,7 @@ def run_script():
 
 # add function to menu
 label_old = "Custom/Align Chunks"
-label = "Custom/Align Timepoints"
+label = "ReefShape/Align Timepoints"
 Metashape.app.removeMenuItem(label_old)
 Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, run_script)

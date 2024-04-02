@@ -47,5 +47,5 @@ def boundary_creation():
         m_list_short = m_list[:4]
         create_shape_from_markers(m_list_short, chunk)
 
-label = "Custom/Create Boundary from Corner Markers"
+label = "ReefShape/Create Boundary from Corner Markers"
 Metashape.app.addMenuItem(label, boundary_creation)

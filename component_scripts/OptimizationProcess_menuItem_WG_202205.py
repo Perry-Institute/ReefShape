@@ -39,5 +39,5 @@ def gradSelectsOptimization():
     Metashape.app.update()
     print("Script finished")
 
-label = "Custom/Optimize Cameras and Model"
+label = "ReefShape/Optimize Cameras and Model"
 Metashape.app.addMenuItem(label, gradSelectsOptimization)
