@@ -10,7 +10,7 @@ This repo is set up with a root folder that contains the resources you need to g
 ### Installation
 To install, you just need to download this repo and unzip it into a location of your choice. You simply open Metashape and run any of the scripts by clicking on Tools --> Run Script... in Metashape, then select the python script you want (described below). This will create a custom menu button called <b>ReefShape</b> in the Metashape GUI that has the script inside it. To run it, you just click the newly created menu option.
 
-That said, it's worth properly installing the scripts (FullUW_dialog.py, align_chunks.py, ui_components.py) by copying them into the Metashape scripts directory. When properly installed, the custom menu options will appear automatically each time you start Metashape. The location of this folder varies on Mac vs PC:
+That said, it's worth properly installing the scripts (full_reefshape_workflow.py, align_chunks.py, ui_components.py) by copying them into the Metashape scripts directory. When properly installed, the custom menu options will appear automatically each time you start Metashape. The location of this folder varies on Mac vs PC:
 
 Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
 
