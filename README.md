@@ -1,4 +1,4 @@
-![ReefShape Logo](https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1)
+![ReefShape Logo](https://www.dropbox.com/scl/fi/ksbvoseoqtkntk2aazmxi/ReefshapeLogo.png?rlkey=hil3gxwrfn8npppy5vgfdmfhb&raw=1)
 # ReefShape
 Agisoft Metashape scripts for underwater Large Area Imaging / photogrammetry, developed specifically for the efficient processing of coral reef photomosaics by Sam Marshall and Will Greene at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>.
 
