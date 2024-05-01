@@ -13,6 +13,12 @@ The scripts facilitate automatic time-series alignment of plots where permanent 
 <i> Screenshot of a reef plot processed with ReefShape. The reference panel at the left shows the inclusion of real-world georeferencing, depth, and scaling information. </i> <br>
 <br>
 
+<p align="center"> 
+  <img src="https://www.dropbox.com/scl/fi/7w4gp8xrdimjvxeoyzbol/Markers.png?rlkey=rhzm5iduonyqw2mp039w82hhn&raw=1" alt="Corner Markers" width="400"/>
+</p>
+<i> Set of four permanent corner tags utilizing Metashape coded targets. These markers are designed to be nailed to the substrate, demarcating the boundaries of a plot upon setup. Automatic time-series alignment of plots relies on these "ground control points", and subsequent timepoints require only marker cleaning and image acquisition, saving significant time underwater. </i> <br>
+<br>
+
 These scripts are under active development - we recommend checking periodically to download the latest version. If you want to learn more or are having trouble using any of the scripts, email wgreene@perryinstitute.org and I'll get back to you as soon as I can.
 
 ### Basics
