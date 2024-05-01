@@ -13,7 +13,7 @@ These scripts are under active development - we recommend checking the periodica
 <i> Screenshot of a reef plot processed with ReefShape. The reference panel at the left shows the inclusion of real-world georeferencing, depth, and scaling information. </i> <br>
 
 ### Basics
-This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. It is designed to be downloaded in its entirety with the Code --> Download Zip button.
+This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. It is designed to be downloaded in its entirety with the Code --> Download ZIP button.
 
 ### Installation
 To install the ReefShape scripts, you just need to download this repo and unzip it into a location of your choice. The contents of the ReefShape_scripts folder should then be copied into the Metashape scripts directory. When properly installed, a custom ReefShape menu bar item containing all scripts will appear automatically each time you start Metashape. The location of the scripts folder varies on Mac vs PC:
@@ -52,7 +52,7 @@ Here's what all the scripts in the ReefShape_scripts folder do.
 
 <b>07_clean_project.py</b> This script looks in the currently selected chunk / timepoint for unnecessary files for long-term storage (key points, depth maps, orthophotos), and deletes them. This dramatically reduces file sizes and is recommended to be run once the user is happy with the data products for a given timepoint. 
 
-<i>Note: The scripts are prefixed with a number so that they appear in the proper order in the ReefShape menu bar item. Over time, new scripts may be added, and thus the numbering on these scripts are subject to change.</i> 
+<i>Note: The scripts are prefixed with a number so that they appear in the proper order in the ReefShape menu bar dropdown. Over time, new scripts may be added, and thus the numbering on these scripts are subject to change.</i> 
 
 ### Other Files
 
@@ -61,7 +61,8 @@ These are the additional files in the root folder of this repo:
 <b>Scalebar Example.txt</b> This file is an example text file that contains the scalebar lengths. A scalebar in this context consists of a "bar" (usually a piece of acrylic, generally ~580mm x 80mm x 3mm) with printed coded Metashape targets taped / glued to either end (see image below). The targets used for scalebars must all be unique, and when using this process, markers 1-4 are reserved for corner markers. For each scalebar, the user must measure the distance between the centerpoints of the targets, then add a line in a text file that corresponds to that scalebar. Each time this scalebar is detected in a project, its distance will be input into Metashape's reference panel. See text file for the correct formatting.
 
 <img src="https://www.dropbox.com/scl/fi/g3oeph5ca859ie4kv7pc4/ScalebarImage.png?rlkey=b496gwbdrvssrrgcvgshk6wds&raw=1" alt="Scalebar Image" width="600"/>
-
+<i> Example illustration of a scalebar </i> <br>
+<br>
 
 <b>Georef Example.csv</b> This CSV file shows the correct format for georeferencing information, matching what is exported by the ReefShape Survey123 survey designed to accompany this method (see below section for more details). We strongly recommend using the ReefShape survey to collect GPS data, however it is possible to use another collection method. If you choose to collect GPS data with a handheld receiver (GPS dive watch, Garmin eTrex, etc), you must download and format your own data for input into the ReefShape workflow script. Use this csv file as a template. In order for the script to run properly, you must specify how your georeferencing file is formatted in the ReefShape dialog box, i.e. which reference values (lat, long, depth, etc) are in which columns. The Full ReefShape Workflow script is set by default to match the formatting of this example file, where the label (target name) is column 1, latitude is column 2, longitude is column 3, depth is column 4, xy accuracy is column 5, and z accuracy is column 6. Since there is one header row, the import starts at row 2. Lat and long must be in decimal degrees, depth must be in negative meters, and the file must be saved as a simple CSV.
 
@@ -70,10 +71,15 @@ These are the additional files in the root folder of this repo:
 
 ## Collecting GPS information with ReefShape Survey
 
-We have created a public Survey123 survey to facilitate easy GPS data collection to accompany this workflow. The survey can be accessed by anybody for free, even without an ArcGIS Online account. The user must download the ESRI Survey123 app on their smartphone, then follow this <a href="https://arcg.is/1aOnKS0">link to the survey</a> (or scan the QR code below) and select the option to open the survey in the app. The survey is meant to be filled out in the field, using either your phone's location or the location of a bluetooth receiver such as a Garmin GLO2 or Bad Elf GPS. The user should place their smartphone in a waterproof pouch or case, and swim out over the locations of each of the four corner markers that define the plot. The survey contains a repeating section allowing for the input of a GPS point and depth corresponding to each marker. The first repeat corresponds by default to target 1; the user should locate that marker, hold the phone or bluetooth receiver directly above it, then press the crosshairs button to record the location. Then, Once the locations of the corner markers and their depths have been entered into the survey, you simply hit submit, and an email will be sent to you with the pre-formatted data, ready to be plugged into the script.
+We have created a public Survey123 survey to facilitate easy GPS data collection to accompany this workflow. The survey can be accessed by anybody for free, even without an ArcGIS Online account. The user must download the ESRI Survey123 app on their smartphone, then follow this <a href="https://arcg.is/1aOnKS0">link to the survey</a> (or scan the QR code below) and select the option to open the survey in the app. The survey is meant to be filled out in the field, using either your phone's location or the location of a bluetooth receiver such as a Garmin GLO2 or Bad Elf GPS. The user should place their smartphone in a waterproof pouch or case, and swim out over the locations of each of the four corner markers that define the plot. The survey contains a repeating section allowing for the input of a GPS point and depth corresponding to each marker. The first repeat corresponds by default to target 1; the user should locate that marker, hold the phone or bluetooth receiver directly above it, then press the crosshairs button to record the location, then repeat for all corners. Once the locations of the corner markers are recorded, the corresponding depths, which should be measured in meters with a dive watch or other instrument, can be input for each target. Once this process is complete, the survey can be submitted and an email will be sent to the user with the pre-formatted data, ready to be plugged into the full ReefShape workflow script.
 
 <img src="https://www.dropbox.com/scl/fi/rcjf9186bmonxr8utr86q/SI-1_Survey123-Screenshot.png?rlkey=fbvna507z9ziwmce6cmjam7c4&raw=1" alt="ReefShape Survey123 Screenshot" width="600"/>
+<i> Screenshot of the Survey123 ReefShape Interface. </i> <br>
+<br>
 
-That's all for now! I hope these scripts are useful to your coral photogrammetry projects!
+![image](https://github.com/Perry-Institute/ReefShape/assets/117117153/c61a2638-63a9-44ef-8104-667496354bcf)
+
+
+That's all for now! I hope ReefShape helps save you time and energy on your coral photogrammetry projects and allows you to spend more time collecting important ecological data to save our reefs.
 
 -Will
