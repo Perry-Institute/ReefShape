@@ -45,6 +45,11 @@ Here's what all the scripts in the ReefShape_scripts folder do.
 <i> The dialog box for the full ReefShape workflow. It allows for all necessary information to be input at once for full automation of the photogrammetry process. </i> <br>
 <br>
 
+
+<img src="https://www.dropbox.com/scl/fi/3h7kh3sisa9wf05j7pyqh/Fig-4_ReefShape-Process.png?rlkey=r5sz0szxeur7gp23ek1g7pn8v&raw=1" alt="ReefShape Process" width="800"/>
+<i> Flow diagram of the process automated within the full ReefShape workflow script.  </i> <br>
+<br>
+
 <b>02_align_chunks.py</b> This script implements a dialog box used to align two timepoints of a photomosaic plot to one another, each of which is contained within a separate chunk of the same project. The script is meant to be used in conjunction with the underwater workflow implemented in full_reefshape_workflow.py. Once the user has collected subsequent sets of photos of a plot with permanent corner markers, this script can be run to align the subsequent sets to a previous timepoint. The data from the earlier time point must be already processed before this script is used. It functions by detecting markers in the "target chunk", creating a temporary reference file with the precise estimated locations of the corner markers from the "reference chunk", and importing them into the target chunk. After running this script, the user should verify the four corner markers were detected properly and that the reference information was imported successfully before running the full reefshape workflow to complete the photogrammetry process and generate data products. If the targets failed to be detected, the user can manually place markers (with the proper names, i.e. "target 1") and re-run the align chunks script to bring over the referencing information from the reference timepoint again.
 
 <img src="https://www.dropbox.com/scl/fi/g5hswvnsz8ltvcrjl0izl/SI-3_Align-Timepoints-Script.png?rlkey=xjthfx7vfn3yw5o3vs145aw2a&raw=1" alt="Align Timepoints Dialog Box" width="600"/>
