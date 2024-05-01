@@ -5,7 +5,7 @@
 Agisoft Metashape scripts for underwater Large Area Imaging / photogrammetry, developed specifically for the efficient processing of georeferenced, time-series coral reef photomosaics by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>.
 
 ## Intro
-This is a collection of scripts to expedite processing of underwater photogrammetry data in Agisoft Metashape Professional V2.0 and above. Specifically, they allow for the automation of the entire photogrammetry process, provided that coded Metashape targets are used for corner markers and scalebars, and that the GPS locations and depths of the corner markers are collected when a plot is first established. 
+This is a collection of scripts to expedite processing of underwater photogrammetry data in Agisoft Metashape Professional V2.0 and above. Specifically, they allow for the automation of the entire photogrammetry process, provided that coded Metashape targets are used for corner markers and scalebars, and that GPS locations and depths of the corner markers are collected when a plot is first established. 
 
 The scripts facilitate automatic time-series alignment of plots where permanent corner markers are installed. Automatic data export is also included for analysis in standard GIS software or <a href="https://github.com/cnr-isti-vclab/TagLab">TagLab</a>. A publication and whitepaper describing the ReefShape method will be made available in the near future. This document is not intended to provide complete instructions for the ReefShape method, but gives an overview of the scripts and their use, as well as information on using the ReefShape GPS data collection survey. 
 
