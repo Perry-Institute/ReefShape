@@ -2,7 +2,9 @@
   <img src="https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1" alt="ReefShape Logo" width="400"/> 
 </p>
 
-ReefShape is a methodology for underwater photogrammetry or Large Area Imaging developed specifically for coral reef monitoring. This GitHub contains python scripts for the efficient processing of georeferenced, time-series coral reef photomosaics using Agisoft Metashape, created by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>.
+ReefShape is a methodology for underwater photogrammetry or Large Area Imaging developed specifically for coral reef monitoring. This GitHub contains python scripts for the efficient processing of georeferenced, time-series coral reef photomosaics using Agisoft Metashape, created by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>. 
+
+We are in the process of publishing this workflow in a peer-reviewed journal. In the interim, we have put together a white paper designed to more fully explain the entire process, from data collection through data analysis. Please find the <a href="https://docs.google.com/document/d/e/2PACX-1vQRazKwhYxGvmL2b0kGN1Nq9on1qL7MEkPXuC5SPvZqiAmmCvN_ShBfYB7Rc4fBbpEiHhQ5WzZkLUA5/pub">ReefShape white paper</a> here. 
 
 ## Intro
 This is a collection of scripts designed to expedite processing of underwater photogrammetry data in Agisoft Metashape Professional V2.0 and above. Specifically, they allow for the automation of the entire photogrammetry process, provided that coded Metashape targets are used for corner markers and scalebars, and that GPS locations and depths of the corner markers are collected when a plot is first established, as is outlined in the ReefShape data collection protocol. 
