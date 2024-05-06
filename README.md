@@ -15,13 +15,16 @@ The scripts facilitate automatic time-series alignment of plots where permanent 
 <i> Screenshot of a reef plot processed with ReefShape. The reference panel at the left shows the inclusion of real-world georeferencing, depth, and scaling information. </i> <br>
 <br>
 
+### Corner Markers
+The ReefShape workflow relies on auto-detectable corner markers being either permenently installed (for time-series monitoring of a plot) or temporarily placed. We have developed two kinds of custom markers for this purpose: simple flexible molded PVC pucks, and experimental anti-fouling markers that resist algal growth. Both types can be nailed, epoxied, or cemented to the substrate for installation. For more information on these corner markers or to purchase sets, contact me at wgreene@perryinstitute.org. 
+
 <p align="center"> 
   <img src="https://www.dropbox.com/scl/fi/7w4gp8xrdimjvxeoyzbol/Markers.png?rlkey=rhzm5iduonyqw2mp039w82hhn&raw=1" alt="Corner Markers" width="400"/>
 </p>
 <i> Set of four permanent corner tags utilizing Metashape coded targets. These markers are designed to be nailed to the substrate, demarcating the boundaries of a plot upon setup. Automatic time-series alignment of plots relies on these "ground control points", and subsequent timepoints require only marker cleaning and image acquisition, saving significant time underwater. </i> <br>
 <br>
 
-These scripts are under active development - we recommend checking periodically to download the latest version. If you want to learn more, purchase sets of our corner markers, or are having trouble using any of the scripts, email me at wgreene@perryinstitute.org and I'll get back to you as soon as I can.
+These scripts are under active development - we recommend checking periodically to download the latest version. If you are having trouble using any of the scripts, email me at wgreene@perryinstitute.org and I'll get back to you as soon as I can.
 
 ### Basics
 This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. It is designed to be downloaded in its entirety with the Code --> Download ZIP button.
