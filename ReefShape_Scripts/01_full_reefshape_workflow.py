@@ -427,7 +427,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         ###### 4. Clean up project ######
-        self.cleanProject(self.chunk)
+        #self.cleanProject(self.chunk) #This step not currently working properly (05/16/2024), so it is commented out. Use standalone fn.
         self.updateAndSave()
         print("Script finished")
 
