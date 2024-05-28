@@ -84,7 +84,8 @@ class BoundaryCopyGUI:
 
 def add_custom_menu():
     Metashape.app.removeMenuItem("ReefShape/Tools/Copy Boundary Polygon")
-    Metashape.app.addMenuItem("ReefShape/Tools/Copy Boundary Polygon", lambda: show_boundary_copy_tool())
+    Metashape.app.removeMenuItem("ReefShape/Tools/Copy Boundary")
+    Metashape.app.addMenuItem("ReefShape/Tools/Copy Boundary", lambda: show_boundary_copy_tool())
 
 def show_boundary_copy_tool():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
