@@ -36,6 +36,8 @@ Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
 
 Mac: /Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts
 
+NOTE: On both Mac and PC, the locations listed above are contained within folders that are hidden by default. You can locate them by manually typing the correct folder path in the path/address bar of Finder / File Explorer. Storing the scripts in other locations will not allow them to be added to Metashape automatically.
+
 It is also possible to run the scripts without full installation. The user can simply open Metashape and run any of the scripts by clicking on Tools --> Run Script... in Metashape, then selecting the desired script (described below). This will create a custom menu button called <b>ReefShape</b> in the Metashape GUI that has the script inside it. To run it, just click the newly created menu option. Note that the custom menu bar options will be lost upon restarting Metashape unless they are installed properly as described above.
 
 ## ReefShape Scripts 
