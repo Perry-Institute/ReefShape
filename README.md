@@ -55,7 +55,7 @@ Here's what all the scripts in the ReefShape_scripts folder do.
 <br>
 
 
-<img src="https://www.dropbox.com/scl/fi/3h7kh3sisa9wf05j7pyqh/Fig-4_ReefShape-Process.png?rlkey=r5sz0szxeur7gp23ek1g7pn8v&raw=1" alt="ReefShape Process" width="800"/>
+<img src="https://www.dropbox.com/scl/fi/fiiu6kzgp6liv1ysumicb/ReefShape-Workflow.png?rlkey=l8esgwdwthnh7wl0qeviqhb2p&raw=1" alt="ReefShape Process" width="800"/>
 <i> Flow diagram of the process automated within the full ReefShape workflow script.  </i> <br>
 <br>
 
