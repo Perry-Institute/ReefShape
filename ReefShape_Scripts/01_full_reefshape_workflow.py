@@ -356,16 +356,27 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             return
 
         # b. build orthomosaic and DEM
+        
+        if(self.chunk.elevation == None):
+            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = Metashape.EnabledInterpolation, flip_x=False, flip_y=False, flip_z=False,
+                           resolution=ORTHO_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
+            print(" --- Temporary DEM Built --- ")
+            
+            
         if(self.chunk.orthomosaic == None):
-            self.chunk.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ModelData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
+            self.chunk.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ElevationData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
                                    cull_faces=False, refine_seamlines=False, flip_x=False, flip_y=False, flip_z=False, subdivide_task=True,
                                    workitem_size_cameras=20, workitem_size_tiles=10, max_workgroup_size=100)
+            print(" --- Orthomosaic Built --- ")
 
-        if(self.chunk.elevation == None):
-            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
-                           resolution=0, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- Orthomosaic and DEM Built --- ")
             self.updateAndSave()
+            
+        if self.chunk.elevation:
+            # Delete the DEM and then rebuild at normal resolution
+            self.chunk.elevation = None
+            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
+                           resolution=DEM_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
+            print(" --- DEM Built --- ")
 
 
         # c. create boundary

@@ -1,6 +1,6 @@
 '''
 Boundary Copy Function with Dialog Box
-05/07/2024
+10/18/2024
 Will Greene
 PIMS/ASU
 
@@ -11,10 +11,8 @@ is useful for getting aligned chunks with custom boundaries to export pixel-alig
 Written with the help of AI (ChatGPT).
 '''
 
-
 import Metashape
 from PySide2 import QtWidgets
-
 
 class BoundaryCopyGUI:
     def __init__(self, parent):
@@ -42,9 +40,18 @@ class BoundaryCopyGUI:
 
         # Populate combo boxes with chunk names
         doc = self.parent.document
+        active_chunk = doc.chunk  # Get the currently active chunk
         for chunk in doc.chunks:
             self.source_combo.addItem(chunk.label)
             self.target_combo.addItem(chunk.label)
+
+        # Set the default source chunk to the first chunk in the document
+        self.source_combo.setCurrentIndex(0)
+
+        # Set the default target chunk to the currently active chunk
+        if active_chunk:
+            active_chunk_index = doc.chunks.index(active_chunk)
+            self.target_combo.setCurrentIndex(active_chunk_index)
 
         dialog.exec_()
     
@@ -61,9 +68,14 @@ class BoundaryCopyGUI:
         source_chunk = doc.chunks[source_index]
         target_chunk = doc.chunks[target_index]
 
-        if target_chunk is None or not hasattr(target_chunk, 'shapes'):
+        if target_chunk is None:
             print("Target chunk is not properly initialized or does not exist.")
             return
+
+        # Ensure the target chunk has a shapes folder
+        if not target_chunk.shapes:
+            target_chunk.shapes = Metashape.Shapes()  # Initialize shapes if not present
+            target_chunk.shapes.crs = source_chunk.shapes.crs  # Ensure CRS matches the source chunk
 
         source_outer_boundary = next((shape for shape in source_chunk.shapes if shape.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary), None)
         if source_outer_boundary is None:
@@ -77,11 +89,10 @@ class BoundaryCopyGUI:
         # Copy geometry directly
         target_outer_boundary.geometry = source_outer_boundary.geometry
 
-        print("Boundary copied successfully.")
+        print("Boundary copied successfully")
+        
+        self.reject()
     
-    
-    
-
 def add_custom_menu():
     Metashape.app.removeMenuItem("ReefShape/Tools/Copy Boundary Polygon")
     Metashape.app.removeMenuItem("ReefShape/Tools/Copy Boundary")
