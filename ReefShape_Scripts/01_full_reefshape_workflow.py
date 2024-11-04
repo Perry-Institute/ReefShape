@@ -360,7 +360,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(self.chunk.elevation == None):
             self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = Metashape.EnabledInterpolation, flip_x=False, flip_y=False, flip_z=False,
                            resolution=ORTHO_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- Temporary DEM Built --- ")
+            print(" --- Hi-Res DEM Built --- ")
             
             
         if(self.chunk.orthomosaic == None):
@@ -371,12 +371,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
             self.updateAndSave()
             
-        if self.chunk.elevation:
-            # Delete the DEM and then rebuild at normal resolution
-            self.chunk.elevation = None
-            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
-                           resolution=DEM_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- DEM Built --- ")
+#        if self.chunk.elevation:
+#            # Delete the DEM and then rebuild at normal resolution
+#            self.chunk.elevation = None
+#            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
+#                           resolution=DEM_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
+#            print(" --- DEM Built --- ")
 
 
         # c. create boundary
