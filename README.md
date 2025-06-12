@@ -34,11 +34,11 @@ The ReefShape workflow relies on auto-detectable corner markers being either per
 
 These scripts are under active development - we recommend checking periodically to download the latest version. If you are having trouble using any of the scripts, email me at wgreene@perryinstitute.org and I'll get back to you as soon as I can.
 
-### Basics
-This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. It is designed to be downloaded in its entirety with the Code --> Download ZIP button.
+## ReefShape Software
+This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. For installation, the repo is designed to be downloaded in its entirety with the Code --> Download ZIP button.
 
 ### Installation
-To install the ReefShape scripts, you just need to download this repo and unzip it into a location of your choice. The contents of the ReefShape_scripts folder should then be copied into the Metashape scripts directory. When properly installed, a custom ReefShape menu bar item containing all scripts will appear automatically each time you start Metashape. The location of the scripts folder varies on Mac vs PC:
+To install the ReefShape scripts, you first need to download this repo and unzip it into a location of your choice. The contents of the ReefShape_scripts folder should then be copied into the Metashape scripts directory. When properly installed, a custom ReefShape menu bar item containing buttons for the scripts will appear automatically each time you start Metashape. The location of the scripts folder varies on Mac vs PC:
 
 Windows: C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts
 
@@ -48,7 +48,7 @@ NOTE: On both Mac and PC, the locations listed above are contained within folder
 
 It is also possible to run the scripts without full installation. The user can simply open Metashape and run any of the scripts by clicking on Tools --> Run Script... in Metashape, then selecting the desired script (described below). This will create a custom menu button called <b>ReefShape</b> in the Metashape GUI that has the script inside it. To run it, just click the newly created menu option. Note that the custom menu bar options will be lost upon restarting Metashape unless they are installed properly as described above.
 
-## ReefShape Scripts 
+### ReefShape Scripts 
 
 Here's what all the scripts in the ReefShape_scripts folder do.
 
@@ -100,7 +100,7 @@ These are the additional files in the root folder of this repo:
 <b>Data Collection Cheat Sheet.pdf</b> This PDF has useful reminders for how to set up plots and carry out data collection correctly to work with these scripts. It is not a full explanation of anything; rather it is meant to be used as a quick reference in the field to make sure you aren't forgetting anything!
 
 
-## Collecting GPS information with ReefShape Survey
+## Collecting location information for ReefShape
 
 We have created a public Survey123 survey to facilitate easy GPS data collection to accompany this workflow. When a survey is submitted, it automatically emails pre-formatted location data to the user. The survey can be accessed by anybody for free, even without an ArcGIS Online account. The user must download the ESRI Survey123 app on their smartphone, then follow this <a href="https://arcg.is/1aOnKS0">link to the survey</a> (or scan the QR code below) and select the option to open the survey in the app. The survey is meant to be filled out in the field, using either your phone's location or the location of a bluetooth receiver such as a Garmin GLO2 or Bad Elf GPS. The user should place their smartphone in a waterproof pouch or case, and swim out over the locations of each of the four corner markers that define the plot. If GPS locations are collected using an alternative method (handheld GPS, RTK GNSS system, drone, etc), the survey can be filled in with the corresponding location data to aid in correctly formatting it for use in the ReefShape process. 
 
@@ -112,7 +112,7 @@ The survey contains a repeating section allowing for the input of a GPS point an
 
 ![image](https://github.com/Perry-Institute/ReefShape/assets/117117153/c61a2638-63a9-44ef-8104-667496354bcf)
 
-## What if I do not or cannot collect real-world location data?
+### What if I do not or cannot collect real-world location data?
 
 Don't worry! We've created a parallel survey called ReefShape Local that helps the user create a georeference file for ReefShape that uses local coordinates instead of GPS coordinates. You can access the survey here: <a href="https://arcg.is/1fWWa01">ReefShape Local</a>. The way it works is simple: you just tell the survey which marker corresponds to which corner (northeast, southeast, southwest, northwest, or north, east, south, west, depending on how you lay out your plot), and input its depth, and the survey does the rest for you, creating and emailing you a reference file that allows for full automation using ReefShape. Remember: if you're using ReefShape Local and NOT using real-world location data, the coordinate system (CRS) in the Full ReefShape Workflow dialog box should be left in Local Coordinates (m).
 
