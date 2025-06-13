@@ -1,62 +1,90 @@
 """
-Full Underwater Imagery Workflow
-Sam Marshall
+Full ReefShape Workflow
+Sam Marshall & Will Greene
+Perry Institute for Marine Science
 
-Implements underwater photomosaic workflow developed by Will Greene
+Version 1.2, June 2025
+
+Implements ReefShape underwater photogrammetry workflow developed by Will Greene
 Many of the component scripts were written by Will Greene and Asif-ul Islam
 These were assembled into this full workflow and UI by Sam Marshall
-
-    Usage notes:
-        - The script will only try to import scaling and georeferencing data if there are zero scalebars and will only try to
-        detect markers if there are zero markers, regardless of whether the user has enabled auto-detect markers in the dialog box.
-        This means that if markers and scalebars are added by hand or it takes multiple tries to get it to read the scaling and
-        georeferencing data properly, the remainder of the workflow should execute whether or not the user selects auto-detectable markers.
-        There are ways around this that will still break the script (eg georeferencing by hand without adding scalebars, then running the
-        workflow with auto-detect markers enabled), but in general it should work regardless of how or in what order the user detects markers or
-        scales the model.
-            One notable exception is if the user wishes to have a mix of automatic and hand-placed markers: the script does not support this,
-        but if these steps are done outside of the script it should build the rest of the outputs without issue.
+Subsequent updates have been made by Will Greene
 """
 import Metashape
 from os import path
 import sys
 import csv
 import re
-from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
+#import exifread
+from datetime import datetime
+from PySide2 import QtGui, QtCore, QtWidgets
 from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, GeoreferenceGroupBox
 
+#function to display message boxes for errors
+def show_error_dialog(title, exception):
+    msg_box = QtWidgets.QMessageBox()
+    msg_box.setIcon(QtWidgets.QMessageBox.Critical)
+    msg_box.setWindowTitle("Error")
+    msg_box.setText(str(title))
+    msg_box.setInformativeText(str(exception))
+    msg_box.exec_()
+    
 class FullWorkflowDlg(QtWidgets.QDialog):
 
     def __init__(self, parent):
         # set document info
         self.doc = Metashape.app.document
+
+        if len(self.doc.chunks) == 0:
+            self.doc.addChunk()
+
+        self.chunk = self.doc.chunk
         self.project_folder = path.dirname(Metashape.app.document.path)
         self.project_name = path.basename(Metashape.app.document.path)[:-4] # extracts project name from file path
         self.output_dir = self.project_folder
 
-        # set default crs options
-        self.localCRS = Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
+        # Create QSettings object to store persistent app state across launches
+        # On Windows this goes to registry, on macOS to plist, on Linux to .conf in ~/.config
+        self.settings = QtCore.QSettings("ReefShape", "UnderwaterWorkflow")
+
+        # set crs options
         self.defaultCRS = Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]')
+        self.crs_options = {
+            "WGS84 + EGM96": Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]'),
+            "Local Coordinates": Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
+        }
         self.autoDetectMarkers = False
         # set default corner marker arrangement
         self.corner_markers = [1, 2, 3, 4]
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowTitle("Run Underwater Workflow")
+        self.setWindowTitle("Full ReefShape Workflow")
 
         # ----- Build Widgets -----
         # these are declared as member variables so that they can be referenced
         # and modified by slots that are outside of the constructor
         # -- General --
+        
         # Coordinate system input
+        self.labelCRS = QtWidgets.QLabel("Coordinate System:")
+        self.comboCRS = QtWidgets.QComboBox()
+        self.comboCRS.addItems(self.crs_options.keys())
+
+        # Set default selection based on saved value or default to second entry
+        saved_wkt = self.settings.value("coordinate_system", self.defaultCRS.wkt)
+        default_index = list(self.crs_options.values()).index(next((crs for crs in self.crs_options.values() if crs.wkt == saved_wkt), self.defaultCRS))
+        self.comboCRS.setCurrentIndex(default_index)
+        
+        
+        """old
         self.labelCRS = QtWidgets.QLabel("Coordinate System:")
         self.btnCRS = QtWidgets.QPushButton("Select CRS")
         self.txtCRS = QtWidgets.QPlainTextEdit("Local Coordinates (m)")
         self.txtCRS.setFixedHeight(40)
         self.txtCRS.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtCRS.setReadOnly(True)
-
+        """
         # generic preselection
         self.checkBoxPreSelect = QtWidgets.QCheckBox("Enable Generic Preselection")
         self.checkBoxPreSelect.setChecked(True)
@@ -75,27 +103,37 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.comboMeshQuality = QtWidgets.QComboBox()
         self.comboMeshQuality.addItems(["Ultra High", "High", "Medium", "Low", "Lowest"])
         self.comboMeshQuality.setCurrentIndex(2)
+        
+        # set vertex colors option
+        self.checkBoxVertexColors = QtWidgets.QCheckBox("Calculate Model Colors")
+        self.checkBoxVertexColors.setToolTip("If checked, Metashape will calculate vertex colors for the mesh. This is useful for visualization but does not affect standard 2D exports. Defaults to false to save time.")
+        self.checkBoxVertexColors.setChecked(False)
 
         # directory input for exports
         self.labelOutputDir = QtWidgets.QLabel("Folder for outputs: ")
         self.btnOutputDir = QtWidgets.QPushButton("Select Folder")
-        self.txtOutputDir = QtWidgets.QPlainTextEdit("No file selected")
+        self.txtOutputDir = QtWidgets.QPlainTextEdit("Defaults to project location")
         self.txtOutputDir.setFixedHeight(40)
         self.txtOutputDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtOutputDir.setReadOnly(True)
-
+        
+        # generate report
+        self.checkBoxReport = QtWidgets.QCheckBox("Generate Processing Report")
+        self.checkBoxReport.setChecked(True)
+        self.checkBoxReport.setToolTip("If this option is checked, a processing report for the currently-selected chunk will be generated")
+        
         # standard outputs for gis
-        self.checkBoxExport = QtWidgets.QCheckBox("Export full-size products for use in GIS")
+        self.checkBoxExport = QtWidgets.QCheckBox("Export Uncropped GIS Outputs")
         self.checkBoxExport.setChecked(True)
         self.checkBoxExport.setToolTip("If this option is checked, the data products will be exported at full size and resolution."
                                        "\n\nIf neither this box nor the Taglab exports box are selected, the data products will not be exported")
 
         # taglab outputs
-        self.checkBoxTagLab = QtWidgets.QCheckBox("Create tiled outputs for use in TagLab")
+        self.checkBoxTagLab = QtWidgets.QCheckBox("Create TagLab Outputs")
         self.checkBoxTagLab.setChecked(True)
         self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
-                                       "\n\nIf this option is checked, a second set of outputs will be created that are broken into blocks that can be used in TagLab")
-        self.checkBoxTagLab.setChecked(False)
+                                       "\n\nIf this option is checked, a second set of outputs will be created for TagLab analysis that are cropped to the boundary polygon and broken into blocks if needed")
+        self.checkBoxTagLab.setChecked(True)
 
         # run script button
         self.btnOk = QtWidgets.QPushButton("Ok")
@@ -114,11 +152,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         main_layout = QtWidgets.QVBoxLayout()  # create main layout - this will hold sublayouts containing individual widgets
 
         # -- Create sublayouts --
-        crs_layout = QtWidgets.QHBoxLayout()
+        """
         crs_layout.addWidget(self.labelCRS)
         crs_layout.addWidget(self.txtCRS)
         crs_layout.addWidget(self.btnCRS)
-
+        """
+        crs_layout = QtWidgets.QHBoxLayout()
+        crs_layout.addWidget(self.labelCRS)
+        crs_layout.addWidget(self.comboCRS)
+        
         checkbox_layout = QtWidgets.QHBoxLayout()
 
         checkbox_layout.addWidget(self.checkBoxPreSelect)
@@ -127,6 +169,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         resolution_layout = QtWidgets.QHBoxLayout()
         resolution_layout.addWidget(self.labelMeshQuality)
         resolution_layout.addWidget(self.comboMeshQuality)
+        resolution_layout.addWidget(self.checkBoxVertexColors)
         resolution_layout.addStretch()
         resolution_layout.addWidget(self.labelCustomRes)
         resolution_layout.addWidget(self.spinboxCustomRes)
@@ -138,6 +181,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         output_layout.addWidget(self.btnOutputDir)
 
         export_layout = QtWidgets.QHBoxLayout()
+        export_layout.addWidget(self.checkBoxReport)
         export_layout.addWidget(self.checkBoxExport)
         export_layout.addWidget(self.checkBoxTagLab)
 
@@ -158,9 +202,13 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         # -- Assemble groupboxes into main layout --
-        addphotos_groupbox = AddPhotosGroupBox(self)
+        self.addphotos_groupbox = AddPhotosGroupBox(self)
+        self.addphotos_groupbox.chunkUpdated.connect(self.refreshChunkNameDisplay)
         self.georef_groupbox = GeoreferenceGroupBox(self)
-        main_layout.addWidget(addphotos_groupbox)
+        if self.chunk and len(self.chunk.markers) == 0:
+            QtCore.QTimer.singleShot(0, lambda: self.georef_groupbox.comboReference.setCurrentIndex(1))
+                #self.georef_groupbox.autoDetectMarkers = True
+        main_layout.addWidget(self.addphotos_groupbox)
         main_layout.addWidget(general_groupbox)
         main_layout.addWidget(self.georef_groupbox)
         # main_layout.addLayout(ok_layout)
@@ -196,14 +244,49 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # to use widget-specific signals (such as currentIndexChanged) instead of core signals
         self.checkBoxDefaultRes.stateChanged.connect(self.onResolutionChange)
         self.btnOutputDir.clicked.connect(self.getOutputDir)
-        self.btnCRS.clicked.connect(self.getCRS)
+        #self.btnCRS.clicked.connect(self.getCRS)
 
         QtCore.QObject.connect(self.btnOk, QtCore.SIGNAL("clicked()"), self.runWorkFlow)
         QtCore.QObject.connect(self.btnQuit, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
-
+        self.loadSettings()
         self.exec()
+        
+    def loadSettings(self):
+        """Load saved settings using QSettings."""
+        self.checkBoxPreSelect.setChecked(self.settings.value("checkBoxPreSelect", True, type=bool))
+        self.checkBoxDefaultRes.setChecked(self.settings.value("checkBoxDefaultRes", False, type=bool))
+        self.spinboxCustomRes.setValue(self.settings.value("spinboxCustomRes", 0.0005, type=float))
+        self.comboMeshQuality.setCurrentIndex(self.settings.value("comboMeshQuality", 2, type=int))
+        self.checkBoxExport.setChecked(self.settings.value("checkBoxExport", True, type=bool))
+        self.checkBoxTagLab.setChecked(self.settings.value("checkBoxTagLab", False, type=bool))
+        self.checkBoxReport.setChecked(self.settings.value("checkBoxExportReport", True, type=bool))
+        self.checkBoxVertexColors.setChecked(self.settings.value("checkBoxVertexColors", False, type=bool))
+        crs_wkt = self.settings.value("coordinate_system", None, type=str)
+        if crs_wkt:
+            self.chunk.crs = Metashape.CoordinateSystem(crs_wkt)
 
-
+    def saveSettings(self):
+        """Save current settings using QSettings."""
+        self.settings.setValue("checkBoxPreSelect", self.checkBoxPreSelect.isChecked())
+        self.settings.setValue("checkBoxDefaultRes", self.checkBoxDefaultRes.isChecked())
+        self.settings.setValue("spinboxCustomRes", self.spinboxCustomRes.value())
+        self.settings.setValue("comboMeshQuality", self.comboMeshQuality.currentIndex())
+        self.settings.setValue("checkBoxExport", self.checkBoxExport.isChecked())
+        self.settings.setValue("checkBoxTagLab", self.checkBoxTagLab.isChecked())
+        self.settings.setValue("checkBoxExportReport", self.checkBoxReport.isChecked())
+        self.settings.setValue("checkBoxVertexColors", self.checkBoxVertexColors.isChecked())
+        selected_label = self.comboCRS.currentText()
+        self.settings.setValue("coordinate_system", self.crs_options[selected_label].wkt)
+    
+    def reject(self):
+        self.saveSettings()
+        super().reject()
+        
+    def closeEvent(self, event):
+        print("Close event triggered")
+        self.saveSettings()
+        event.accept()  # allow the window to close
+         
     def runWorkFlow(self):
         '''
         Contains the main workflow structure
@@ -211,7 +294,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         print("Script started...")
         self.setEnabled(False)
         self.chunk = Metashape.app.document.chunk
-
+        
+        selected_crs_label = self.comboCRS.currentText()
+        selected_crs = self.crs_options[selected_crs_label]
+        self.chunk.crs = selected_crs
         ###### 0. Setting Parameters ######
         if(not self.georef_groupbox.autoDetectMarkers and self.chunk.model == None):
             Metashape.app.messageBox("You have initiated the script without specifying georeferencing information. If you ran the align timepoints script first, "
@@ -254,8 +340,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.corner_markers = self.georef_groupbox.corner_markers
         if(self.chunk.tie_points and not self.chunk.meta['init_tie_points']):
             self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
-
-
+        
+        
         ###### 1. Align & Scale ######
         # a. Align photos
         if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
@@ -296,7 +382,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             print(" --- Markers Detected --- ")
 
         # c. scale model
-        if(len(self.chunk.scalebars) == 0 and self.georef_groupbox.autoDetectMarkers): # creates scalebars only if there are none already - ask Will if this makes sense
+        if(len(self.chunk.scalebars) == 0 and self.georef_groupbox.autoDetectMarkers): # creates scalebars only if there are none already
             ref_except = self.referenceModel(georef_path, ref_formatting)
             scale_except = ""
             if(not ref_except):
@@ -341,18 +427,29 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             task.max_workgroup_size = 100
             task["pm_enable"] = "1"
             task.apply(self.chunk)
-
-            #self.chunk.buildDepthMaps(downscale = DM_QUALITY, filter_mode = Metashape.MildFiltering, reuse_depth = True, max_neighbors=16, subdivide_task=True, workitem_size_cameras=20, max_workgroup_size=100)
             self.updateAndSave()
-            self.chunk.buildModel(surface_type = Metashape.Arbitrary, interpolation = Metashape.EnabledInterpolation, face_count=Metashape.HighFaceCount,
-                             face_count_custom = 1000000, source_data = Metashape.DepthMapsData, keep_depth = True) # change this to false to avoid wasted space?
+            
+            self.chunk.buildModel(
+                surface_type = Metashape.Arbitrary, 
+                interpolation = Metashape.EnabledInterpolation, 
+                face_count=Metashape.HighFaceCount,
+                face_count_custom = 1000000, 
+                source_data = Metashape.DepthMapsData, 
+                keep_depth = True,
+                vertex_colors=False
+            )
             print(" --- Mesh Generated --- ")
             self.updateAndSave()
-
+            
+            if self.checkBoxVertexColors.isChecked():
+                self.chunk.colorizeModel()
+                self.updateAndSave()
+                
         # if not using automatic referencing, exit script after mesh creation
         if(not self.autoDetectMarkers and len(self.chunk.markers) == 0):
             print("Exiting script for manual referencing")
-            self.reject()
+            Metashape.app.messageBox("Image alignment and mesh building complete.\n\nNow, add referencing information, then re-run the full dialog script to complete processing.")
+            self.close()
             return
 
         # b. build orthomosaic and DEM
@@ -387,17 +484,48 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         ###### 3. Export products ######
 
         # set up compression parameters
+        #first, for regular orthomosaic
         jpg = Metashape.ImageCompression()
         jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG
         jpg.jpeg_quality = 90
         jpg.tiff_big = True
         jpg.tiff_overviews = True
-
+        #lzw for DEM and TagLab products
         lzw = Metashape.ImageCompression()
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
         lzw.tiff_big = True
         lzw.tiff_overviews = True
+        
+        # generate report              
+        if self.checkBoxReport.isChecked():
+            report_path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf"
+            if not os.path.exists(report_path):
+                # --- Temporarily disable boundary polygon for uncropped report ---
+                original_boundaries = []
+                if self.chunk.shapes:
+                    for shape in self.chunk.shapes:
+                        if shape.geometry and shape.geometry.type == Metashape.Geometry.Type.PolygonType:
+                            if shape.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
+                                original_boundaries.append((shape, shape.boundary_type))
+                                shape.boundary_type = Metashape.Shape.BoundaryType.NoBoundary
 
+                # Export report
+                human_date = self.format_date_label(self.chunk.label)
+                self.chunk.exportReport(
+                    path=report_path,
+                    title=self.project_name,
+                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\n\nCreated with ReefShape v1.2\n\nProcessed on:",
+                    font_size=12,
+                    page_numbers=True,
+                    include_system_info=True 
+                )
+
+                # --- Restore original boundary types ---
+                for shape, original_type in original_boundaries:
+                    shape.boundary_type = original_type
+                     
+
+        # generate main orthomosaic and DEM for GIS
         if(self.checkBoxExport.isChecked()):
             # export orthomosaic and DEM in full format
             ortho_path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".tif"
@@ -406,24 +534,21 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 self.chunk.exportRaster(path = ortho_path, resolution = ORTHO_RES,
                                    source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
                                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape with ReefShape')
+            
             if(not os.path.exists(dem_path)):
                 self.chunk.exportRaster(path = dem_path, resolution = DEM_RES, nodata_value = -5,
                                    source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = lzw,
                                    save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape')
+                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='DEM', description='Generated by Agisoft Metashape with ReefShape')
 
-            # build output path for boundary shapefile - this is necessary since the files will be
-            # placed in their own new folder within the output folder that the user created/selected
+            # build output path for boundary shapefile - this is necessary since the files will be placed in their own new folder within the output folder that the user created/selected
             shape_dir = os.path.join(self.output_dir, self.project_name + "_" + self.chunk.label + "_boundary")
             if(not os.path.exists(shape_dir)):
                 os.mkdir(shape_dir)
             self.chunk.exportShapes(path = os.path.join(shape_dir, self.project_name + "_" + self.chunk.label + "_boundary.shp"), save_points=False, save_polylines=False, save_polygons=True,
                                format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
 
-            # generate report
-            self.chunk.exportReport(path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf", title = self.project_name + " " + self.chunk.label,
-                               description = "Processing report for " + self.project_name + " on chunk " + self.chunk.label, font_size=12, page_numbers=True, include_system_info=True)
 
         # export ortho and dem in blockwise format for Taglab
         if(self.checkBoxTagLab.isChecked()):
@@ -436,13 +561,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                                save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
                                min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=True,title='DEM', description='Generated by Agisoft Metashape')
 
-
+        
         ###### 4. Clean up project ######
-        #self.cleanProject(self.chunk) #This step not currently working properly (05/16/2024), so it is commented out. Use standalone fn.
+        self.cleanProject()
         self.updateAndSave()
+        
+        ###### 5. Finish Script ######      
         print("Script finished")
-
-        self.reject()
+        Metashape.app.messageBox("ReefShape has finished processing!\n\nRemember to verify all data products to sufficient data quality before beginning analysis.")
+        self.saveSettings()
+        self.close()
 
 
     ############# Workflow Functions #############
@@ -453,7 +581,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         Metashape.app.document.save()
         print("Project Saved")
 
-
+    def refreshChunkNameDisplay(self):
+        if self.doc.chunk:
+            self.addphotos_groupbox.txtChunkName.setPlainText(self.doc.chunk.label)
+    
     def createScalebars(self, path):
         '''
         Creates scalebars in the project's active chunk based on information from
@@ -673,7 +804,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
 
-    def clean_project(self):
+    def cleanProject(self):
 
         # Remove orthophotos without removing orthomosaic
         ortho = self.chunk.orthomosaic
@@ -689,12 +820,17 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         depthmaps = self.chunk.depth_maps
         if depthmaps:
             depthmaps.clear()
-
-        #update Apr 2024: updated to fix issues if one or more of these products is not present
-
-
-
-
+            
+    def format_date_label(self, date_str):
+        """
+        Tries to convert YYYYMMDD string to human-readable format, e.g. "20250612" -> "June 12, 2025"
+        If chunk label is not in this format, just uses chunk label
+        """
+        try:
+            date_obj = datetime.strptime(date_str, "%Y%m%d")
+            return date_obj.strftime("%B %d, %Y")
+        except ValueError:
+            return date_str
 
     # ----- Slots for Dialog Box -----
     def getOutputDir(self):
@@ -702,10 +838,10 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(self.output_dir):
             self.txtOutputDir.setPlainText(self.output_dir)
         else:
-            self.txtOutputDir.setPlainText("No File Selected")
+            self.txtOutputDir.setPlainText("No Folder Selected")
 
     def getCRS(self):
-        crs = Metashape.app.getCoordinateSystem("Select Coordinate System")
+        crs = Metashape.app.getCoordinateSystem("Select Coordinate System",'LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
         if(crs):
             Metashape.app.document.chunk.crs = crs
             self.txtCRS.setPlainText(crs.name)
@@ -719,13 +855,17 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.spinboxCustomRes.setEnabled(not use_default_res)
 
     # END CLASS FullWorkflowDlg
+
 def run_script():
-    app = QtWidgets.QApplication.instance()
-    parent = app.activeWindow()
-
-    dlg = FullWorkflowDlg(parent)
-
-
+    try:
+        app = QtWidgets.QApplication.instance()
+        parent = app.activeWindow()
+        dlg = FullWorkflowDlg(parent)
+        
+    except Exception as e:
+        show_error_dialog("Workflow Error", str(e))    
+            
+    
 
 # add function to menu
 label = "ReefShape/Full ReefShape Workflow"

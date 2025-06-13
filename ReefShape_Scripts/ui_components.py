@@ -17,8 +17,19 @@ import os
 import sys
 import csv
 import re
+from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
-
+from PySide2.QtCore import Signal
+try:
+    import exifread
+except ImportError:
+    import subprocess
+    import sys
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "exifread"])
+        import exifread
+    except Exception as e:
+        raise ImportError(f"Failed to install exifread: {str(e)}")
 
 class AddPhotosGroupBox(QtWidgets.QGroupBox):
     '''
@@ -33,6 +44,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
     The parent widget MUST have an attribute named 'chunk' that represents the project's active
     chunk - this may be changed in a later version, but is a requirement for now
     '''
+    chunkUpdated = Signal()
     def __init__(self, parent):
         # call parent constructor to initialize
         super().__init__("Project Setup")
@@ -58,13 +70,6 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.txtProjectName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtProjectName.setReadOnly(True)
 
-        self.labelChunkName = QtWidgets.QLabel("Chunk Name:")
-        self.btnChunkName = QtWidgets.QPushButton("Rename Chunk")
-        self.txtChunkName = QtWidgets.QPlainTextEdit(Metashape.app.document.chunk.label)
-        self.txtChunkName.setFixedHeight(40)
-        self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.txtChunkName.setReadOnly(True)
-
         self.labelAddPhotos = QtWidgets.QLabel("Add Photos:")
         self.btnAddPhotos = QtWidgets.QPushButton("Select Folder")
         self.txtAddPhotos = QtWidgets.QPlainTextEdit()
@@ -74,6 +79,13 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         self.txtAddPhotos.setFixedHeight(40)
         self.txtAddPhotos.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtAddPhotos.setReadOnly(True)
+
+        self.labelChunkName = QtWidgets.QLabel("Chunk Name:")
+        self.btnChunkName = QtWidgets.QPushButton("Rename Chunk")
+        self.txtChunkName = QtWidgets.QPlainTextEdit(Metashape.app.document.chunk.label)
+        self.txtChunkName.setFixedHeight(40)
+        self.txtChunkName.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.txtChunkName.setReadOnly(True)
 
         self.btnCreateProj = QtWidgets.QPushButton("Save Project")
         # self.btnCreateProj.setFixedWidth(75)
@@ -105,8 +117,8 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
         main_layout.addWidget(self.labelNamingConventions)
         main_layout.addLayout(project_name_layout)
-        main_layout.addLayout(chunk_name_layout)
         main_layout.addLayout(photos_dir_layout)
+        main_layout.addLayout(chunk_name_layout)
         main_layout.addLayout(create_proj_layout)
 
         self.setLayout(main_layout)
@@ -142,6 +154,21 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         else:
             Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
 
+        # After adding photos, attempt to auto-rename chunk if default name
+        if self.parent.chunk.label.startswith("Chunk"):
+            try:
+                photo_date = self.extract_photo_date(photo_list)
+                if photo_date:
+                    self.parent.chunk.label = photo_date
+                    self.txtChunkName.setPlainText(photo_date)
+                    #Metashape.app.document.modified = True
+                    Metashape.app.update()
+                    QtWidgets.QApplication.processEvents()
+                    self.chunkUpdated.emit()
+                    print(f"Chunk name auto-renamed to photo date: {photo_date}")
+            except Exception as e:
+                print(f"Failed to auto-rename chunk from EXIF date: {e}")
+
 
     def getProjectName(self):
         '''
@@ -173,10 +200,14 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         if(self.checkNaming(new_name) and new_name and ok):
             self.chunk_name = new_name
             Metashape.app.document.chunk.label = new_name
+            #Metashape.app.document.modified = True
+            Metashape.app.update()
+            QtWidgets.QApplication.processEvents()
+            self.chunkUpdated.emit()
         elif(not self.checkNaming(new_name) and ok):
             Metashape.app.messageBox("Unable to rename chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
         self.txtChunkName.setPlainText(self.chunk_name)
-
+        
     def checkNaming(self, name):
         '''
         Checks project and chunk names to ensure there are no special characters in them
@@ -187,9 +218,10 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
     def saveProject(self):
         '''
-        Saves project to the designated path and renames the active chunk
+        Saves project to the designated path, leaving chunk names as is
         '''
-        Metashape.app.document.chunk.label = self.chunk_name
+        #active_chunk_name = self.chunk.label
+        #Metashape.app.document.chunk.label = self.chunk_name
 
         if(self.project_path):
             # save project with new name - if project already exists, the current project state will be saved as changes to it
@@ -198,6 +230,27 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             self.parent.project_name = os.path.basename(self.project_path)[:-4]
         else:
             Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
+
+    def extract_photo_date(self, photo_list):
+        doc = Metashape.app.document
+        chunk = doc.chunk
+        photo_path = photo_list[0]
+        try:
+            with open(photo_path, 'rb') as f:
+                tags = exifread.process_file(f, stop_tag="EXIF DateTimeOriginal")
+            date_tag = tags.get("EXIF DateTimeOriginal")
+
+            if not date_tag:
+                raise ValueError("DateTimeOriginal tag not found.")
+
+            dt = datetime.strptime(str(date_tag), "%Y:%m:%d %H:%M:%S")
+            self.photo_date = dt.strftime("%Y%m%d")
+            return self.photo_date
+
+        except Exception as e:
+            print(f"Failed to extract photo date: {e}")
+            return None
+        
 
 
 class BoundaryMarkerDlg(QtWidgets.QDialog):
@@ -359,7 +412,7 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
 
         # -- Build Widgets --
         # scaling/georeferencing type
-        self.labelReference = QtWidgets.QLabel("Are you using auto-detectable markers for scaling and georeferencing?")
+        self.labelReference = QtWidgets.QLabel("Do you want to input georeferencing information now? \nSelect No if chunk is already referenced or if you'd like to do it manually.")
         self.comboReference = QtWidgets.QComboBox()
         self.comboReference.addItems(["No", "Yes"])
         self.comboReference.setCurrentIndex(0)

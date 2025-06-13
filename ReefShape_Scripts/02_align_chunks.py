@@ -48,13 +48,14 @@ class AlignChunksDlg(QtWidgets.QDialog):
         # ---- Project Setup Groupbox ----
         # create project setup groupbox - this is a modified AddPhotosGroupBox
         self.project_setup = AddPhotosGroupBox(self)
+        self.project_setup.chunkUpdated.connect(self.updateChunkList)
         self.project_setup.labelNamingConventions.hide()
         self.project_setup.labelProjectName.hide()
         self.project_setup.txtProjectName.hide()
         self.project_setup.btnProjectName.hide()
-        self.project_setup.labelChunkName.hide()
-        self.project_setup.txtChunkName.hide()
-        self.project_setup.btnChunkName.hide()
+        #self.project_setup.labelChunkName.hide()
+        #self.project_setup.txtChunkName.hide()
+        #self.project_setup.btnChunkName.hide()
         self.project_setup.btnCreateProj.hide()
 
         # add target types
@@ -72,15 +73,17 @@ class AlignChunksDlg(QtWidgets.QDialog):
         for target_type in self.targetTypes:
             self.comboTargetType.addItem(target_type[0])
 
+        #widget group for create chunk button and target type selector
         layout_target_type = QtWidgets.QHBoxLayout()
-        layout_target_type.addWidget(self.labelTargetType)
-        layout_target_type.addWidget(self.comboTargetType)
-        layout_target_type.addStretch()
-
-        # add a button to create a new chunk
+        # add a button to create a new chunk 
         self.btnCreateChunk = QtWidgets.QPushButton("Create Chunk")
         layout_target_type.addWidget(self.btnCreateChunk)
-        self.project_setup.layout().addLayout(layout_target_type)
+        layout_target_type.addStretch()
+        layout_target_type.addWidget(self.labelTargetType)
+        layout_target_type.addWidget(self.comboTargetType)
+        
+        #add this widget group to the top of the project setup layout
+        self.project_setup.layout().insertLayout(0, layout_target_type)
         # add the button to create_proj_layout - because of the way Qt passes ownership of layouts
         # around, create_proj_layout must be accessed via the main layout's itemAt() function
         # self.project_setup.layout().itemAt(4).addWidget(self.project_setup.btnCreateChunk)
@@ -141,7 +144,10 @@ class AlignChunksDlg(QtWidgets.QDialog):
 
         # populate combo boxes with options
         self.updateChunkList()
+        self.comboRefChunk.popupAboutToBeShown = self.updateChunkList
+        self.comboNewChunk.popupAboutToBeShown = self.updateChunkList
         self.updateMarkerList()
+        self.comboDamagedMarkers.popupAboutToBeShown = self.updateMarkerList
         self.txtDamagedMarkers.setPlainText("No Damaged Markers")
         # connect signals and slots
         self.btnCreateChunk.clicked.connect(self.createChunk)
@@ -201,7 +207,7 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.doc.save()
         print("Project Saved")
 
-    def createChunk(self):
+    """def createChunk(self):
         '''
         Slot: creates a new chunk in the project and prompts the user for a name
         '''
@@ -212,7 +218,18 @@ class AlignChunksDlg(QtWidgets.QDialog):
             self.project_setup.txtAddPhotos.setPlainText("Select Folder")
             self.chunk.label = new_name
         self.updateChunkList()
-
+        """
+    def createChunk(self):
+        '''
+        Slot: creates a new chunk in the project with default naming
+        '''
+        self.chunk = self.doc.addChunk()
+        self.doc.chunk = self.chunk # set the projects active chunk to be the new chunk
+        self.project_setup.txtAddPhotos.setPlainText("Select Folder")
+        self.project_setup.txtChunkName.setPlainText(self.doc.chunk.label)
+        self.updateChunkList()
+        self.updateMarkerList()
+        
     def updateChunkList(self):
         '''
         Slot: populates/updates the list of chunks to choose from in each combo box
@@ -228,7 +245,8 @@ class AlignChunksDlg(QtWidgets.QDialog):
             self.chunk_keys.append(chunk.key)
         self.comboRefChunk.setCurrentIndex(self.chunk_keys.index(self.reference_chunk.key))
         self.comboNewChunk.setCurrentIndex(self.chunk_keys.index(self.chunk.key))
-
+        self.updateMarkerList()
+        
     def setReferenceChunk(self):
         '''
         Slot: when the user selects a new chunk to be the reference chunk, updates the corresponding
@@ -254,20 +272,39 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.comboDamagedMarkers.clear()
         if(len(self.reference_chunk.markers) > 0):
             for marker in self.reference_chunk.markers:
-                self.comboDamagedMarkers.addItem(marker.label)
+                self.comboDamagedMarkers.addItem(marker.label, marker)
         self.comboDamagedMarkers.addItem("Add damaged marker")
         self.comboDamagedMarkers.setCurrentIndex(len(self.reference_chunk.markers))
         self.damaged_markers.clear()
         self.txtDamagedMarkers.setPlainText("No Damaged Markers")
 
-    def addDamagedMarker(self):
+    """def addDamagedMarker(self):
         '''
         Slot: when the user selects a marker from the dropdown list, add it to the list of
         damaged markers and update the text box displaying the list
         '''
         self.damaged_markers.append(self.reference_chunk.findMarker(self.comboDamagedMarkers.currentIndex()))
         self.txtDamagedMarkers.setPlainText(str(self.damaged_markers))
-
+        """
+    def addDamagedMarker(self):
+        """
+        Slot: when the user selects a marker from the dropdown list,
+        add it to the damaged markers list and update the text box.
+        """
+        marker = self.comboDamagedMarkers.currentData()
+        if marker is not None:
+            if marker not in self.damaged_markers:
+                self.damaged_markers.append(marker)
+            self.updateDamagedMarkerDisplay()
+        else:
+            print("Warning: selected marker is None")
+    def updateDamagedMarkerDisplay(self):
+        if not self.damaged_markers:
+            self.txtDamagedMarkers.setPlainText("No damaged markers")
+        else:
+            labels = [marker.label for marker in self.damaged_markers if marker is not None]
+            self.txtDamagedMarkers.setPlainText(", ".join(labels))    
+    
     def removeDamagedMarker(self):
         '''
         Slot: removes the most recently added marker from the list of added markers

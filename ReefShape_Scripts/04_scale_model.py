@@ -92,6 +92,7 @@ def Create_Scalebars():
          break
  
    file.close()
+   chunk.updateTransform()
    Metashape.app.update()
    print("Script finished")
 label = "ReefShape/Tools/Create Scalebars from Targets"
