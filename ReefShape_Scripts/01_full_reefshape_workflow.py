@@ -59,6 +59,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
+        self.setWindowModality(QtCore.Qt.ApplicationModal)
         self.setWindowTitle("Full ReefShape Workflow")
 
         # ----- Build Widgets -----
@@ -286,6 +287,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         print("Close event triggered")
         self.saveSettings()
         event.accept()  # allow the window to close
+        self.reject() #explicitly deal with this for non-classic systems
          
     def runWorkFlow(self):
         '''
@@ -514,7 +516,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 self.chunk.exportReport(
                     path=report_path,
                     title=self.project_name,
-                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\n\nCreated with ReefShape v1.2\n\nProcessed on:",
+                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\nCreated with ReefShape v1.2\nProcessed on:",
                     font_size=12,
                     page_numbers=True,
                     include_system_info=True 
@@ -861,7 +863,6 @@ def run_script():
         app = QtWidgets.QApplication.instance()
         parent = app.activeWindow()
         dlg = FullWorkflowDlg(parent)
-        
     except Exception as e:
         show_error_dialog("Workflow Error", str(e))    
             

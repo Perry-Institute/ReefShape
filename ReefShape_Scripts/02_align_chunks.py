@@ -30,6 +30,7 @@ class AlignChunksDlg(QtWidgets.QDialog):
     def __init__(self, parent):
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
+        self.setWindowModality(QtCore.Qt.ApplicationModal)
         self.setWindowTitle("Align Chunks")
         self.setMinimumWidth(500)
         # set document info
@@ -356,14 +357,19 @@ class AlignChunksDlg(QtWidgets.QDialog):
             writer = csv.writer(f)
             writer.writerows(ref)
         f.close()
-
-    # END CLASS AlignChunksDlg
+    
+    def closeEvent(self, event):
+        self.reject()
+        event.accept()
+        # END CLASS AlignChunksDlg
 def run_script():
-    app = QtWidgets.QApplication.instance()
-    parent = app.activeWindow()
-
-    dlg = AlignChunksDlg(parent)
-
+    try:
+        app = QtWidgets.QApplication.instance()
+        parent = app.activeWindow()
+        dlg = AlignChunksDlg(parent)
+    except Exception as e:
+        QtWidgets.QMessageBox.critical(None, "Error", str(e))
+        
 
 
 # add function to menu
