@@ -1,12 +1,17 @@
+# Reefshape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring
+
 <p align="center"> 
   <img src="https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1" alt="ReefShape Logo" width="400"/> 
 </p>
 
-<b>NEW (JUNE 2025): ✨Introducing ReefShape v1.2!✨ The new version contains a number of improvements to functionality and some bug fixes. It also comes with installer files for Windows and Mac to make it easier to get ReefShape up and running. [See the full changelog here.](CHANGELOG.md)</b>
+<b>NEW (JUNE 2025): ✨Introducing ReefShape v1.2!✨ The new version contains a number of improvements to functionality and some bug fixes. It also comes with installer files for Windows and Mac to make it easier to get ReefShape up and running. [See the full changelog here.](CHANGELOG.md)</b> 
 
 ReefShape is a methodology for underwater photogrammetry or Large-Area Imaging developed specifically for coral reef monitoring. This GitHub repository acts as a landing page for ReefShape, and includes instructional materials on the methodology, sample files, and processing scripts. The key feature or ReefShape is <b>robust, automated photogrammetry data processing</b> using our custom pipeline that's driven by python scripts for the efficient processing of georeferenced, time-series coral reef photomosaics using Agisoft Metashape Professional. ReefShape was created by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>. 
 
-We are in the process of publishing this method in a peer-reviewed journal. In the interim, we have put together a white paper designed to more fully explain the entire process, from data collection through data analysis. Please find the <a href="https://docs.google.com/document/d/e/2PACX-1vQRazKwhYxGvmL2b0kGN1Nq9on1qL7MEkPXuC5SPvZqiAmmCvN_ShBfYB7Rc4fBbpEiHhQ5WzZkLUA5/pub">ReefShape white paper</a> here. 
+### ReefShape Publication
+The ReefShape method has been peer-reviewed and is published open-access in the Journal of Visualized Experiments. Check out the publication <a href="https://dx.doi.org/10.3791/67343">here</a>. The article includes a comprehensive protocol section with all instructions needed to make use of ReefShape. Alongside it is a 14 minute video explaining the protocol. Reading the JoVE article is the best place to start to understand what ReefShape is and how to use it.
+
+Additionally, we have put together a white paper designed to more fully explain the entire process, from data collection through data analysis. Please find the <a href="https://docs.google.com/document/d/e/2PACX-1vQRazKwhYxGvmL2b0kGN1Nq9on1qL7MEkPXuC5SPvZqiAmmCvN_ShBfYB7Rc4fBbpEiHhQ5WzZkLUA5/pub">ReefShape white paper</a> here. 
 
 ### ReefShape Webinar
 [![Webinar Thumbnail](https://www.dropbox.com/scl/fi/fqazzf3t70hdx24sebdec/ReefShape-Webinar-Thumbnail.jpg?rlkey=1fx81abbdsc11mocxg7bu7438&raw=1)](http://www.youtube.com/watch?v=N4yzl1FFQcE "ReefShape Webinar")
@@ -49,6 +54,8 @@ Windows: `C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts`
 Mac: `/Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts`
 
 NOTE: On both Mac and PC, the locations listed above are contained within folders that are hidden by default. You can locate them by manually typing the correct folder path in the path/address bar of Finder / File Explorer. Storing the scripts in other locations will not allow them to be added to Metashape automatically.
+
+ONE MORE NOTE: On Mac, if you have Gatekeeper turned on, the installation app will be blocked. If you get this warning, it can easily be bypassed by going to System Preferences --> Privacy & Security, then scrolling to the bottom and clicking allow. 
 
 It is also possible to run the scripts without full installation. The user can simply open Metashape and run any of the scripts by clicking on Tools --> Run Script... in Metashape, then selecting the desired script (described below). This will create a custom menu button called <b>ReefShape</b> in the Metashape GUI that has the script inside it. To run it, just click the newly created menu option. Note that the custom menu bar options will be lost upon restarting Metashape unless they are installed properly as described above.
 
