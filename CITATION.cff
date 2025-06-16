@@ -1,0 +1,56 @@
+# This CITATION.cff reference content was generated from Zotero.
+references:
+  - title: >-
+      Reefshape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring
+    abstract: |
+      Large-area imaging (LAI) through structure-from-motion photogrammetry has gained significant traction as a monitoring tool for coral reef ecosystems, allowing for the creation of a digital model of a section of reef that can be analyzed ex situ to collect data on a benthic composition, structural complexity, and other metrics. While a variety of approaches have been used, a systematic approach to data collection and computer processing remains a need for many researchers. To address this, we have developed ReefShape, a straightforward and comprehensive workflow for underwater image collection, georeferencing, data processing, and time-series alignment. Specific camera system recommendations and image acquisition instructions are provided based on our experience. A process to incorporate real-world georeferencing using permanent ground control markers fixed to the substrate that facilitates the automatic alignment of time-series datasets is described. A set of processing scripts was developed to automate the data processing workflow, streamlining and dramatically simplifying the normally time-consuming and complex process. Our scripted approach aims to reduce the burden of data processing on coral reef researchers, increase the efficiency of the photogrammetry pipeline, and export data in analysis-ready formats for use in common GIS and coral reef imagery segmentation programs. The methods described here provide a comprehensive solution to integrate photogrammetry as a reef monitoring tool while remaining flexible and leaving the specific analyses to be conducted up to the researcher.
+    type: journalArticle
+    database: DOI.org (Crossref)
+    date-accessed: 2025-06-16T19:51:38Z
+    issn: 1940-087X
+    issue: 220
+    journal: JoVE
+    languages: 
+      - en
+    pages: 67343
+    url: https://app.jove.com/t/67343/reefshape-system-for-efficient-collection-automated-processing-time
+    authors: 
+      - family-names: Greene
+        given-names: William O.
+      - family-names: Marshall
+        given-names: Sam
+      - family-names: Li
+        given-names: Jiwei
+      - family-names: Dahlgren
+        given-names: Craig P.
+    editors: 
+      - family-names: Greene
+        given-names: William O.
+      - family-names: Marshall
+        given-names: Sam
+      - family-names: Li
+        given-names: Jiwei
+      - family-names: Dahlgren
+        given-names: Craig P.
+    recipients: 
+      - family-names: Greene
+        given-names: William O.
+      - family-names: Marshall
+        given-names: Sam
+      - family-names: Li
+        given-names: Jiwei
+      - family-names: Dahlgren
+        given-names: Craig P.
+    translators: 
+      - family-names: Greene
+        given-names: William O.
+      - family-names: Marshall
+        given-names: Sam
+      - family-names: Li
+        given-names: Jiwei
+      - family-names: Dahlgren
+        given-names: Craig P.
+    date-published: 2025-06-13
+    identifiers: 
+      - type: doi
+        value: 10.3791/67343
