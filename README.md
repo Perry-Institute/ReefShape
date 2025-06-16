@@ -131,3 +131,17 @@ Don't worry! We've created a parallel survey called ReefShape Local that helps t
 That's all for now! I hope ReefShape helps save you time and energy on your coral photogrammetry projects and allows you to spend more time collecting important ecological data to help understand and protect our reefs.
 
 -Will
+
+## Citation
+If you use ReefShape, please cite it:
+```bibtex
+@article{ReefShape,
+	title = {Reefshape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring},
+	author = {Greene, William O. and Marshall, Sam and Li, Jiwei and Dahlgren, Craig P.},
+	journal = {Journal of Visualized Experiments},
+	number = {220},
+	year = {2025},
+  pages = {67343},
+	issn = {1940-087X},
+	doi = {10.3791/67343}
+}
