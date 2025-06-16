@@ -3,6 +3,8 @@
 ## [v1.2] – June 2025
 
 ### ✨ Major Enhancements
+✅ **New Installation Procedure**: To make life easier, ReefShape now has installer scripts for Mac and PC that automatically install the scripts for you. You can still install in the previous fashion by copying and pasting the scripts into the Metashape scripts folder.
+
 ✅ **Auto-naming of chunks**: When adding new photos in both main scripts (Full ReefShape Workflow and Align Timepoints), the chunk is automatically renamed to match the capture date in the EXIF data of the images. If this is wrong, you can still rename manually!  
 
 ✅ **Manual setting of vertex coloring**: Previously, vertex colors were always generated, sometimes adding hours to the processing time. Vertex colors can now be disabled to save time. If they are enabled, a separate progress bar tracks vertex color generation much more accurately.  
