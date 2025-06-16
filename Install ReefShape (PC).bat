@@ -5,7 +5,7 @@ echo Installing Metashape scripts for Windows...
 
 REM Get the path to this script's directory
 set "SOURCE=%~dp0ReefShape_Scripts"
-set "TARGET=%APPDATA%\Local\Agisoft\Metashape Pro\scripts"
+set "TARGET=%LOCALAPPDATA%\Agisoft\Metashape Pro\scripts"
 
 echo Source folder: %SOURCE%
 echo Target folder: %TARGET%
