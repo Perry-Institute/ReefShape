@@ -252,16 +252,16 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         for cam in chunk.cameras:
             if cam.label == photo_list[0] and cam.photo and cam.photo.meta:
                 meta = cam.photo.meta
-                for key in ["Exif/DateTimeOriginal", "Exif/CreateDate", "Exif/DateTime"]:
+                for key in ["Exif/DateTimeOriginal", "Exif/DateTime", "System/FileModifyDate"]:
                     if key in meta:
                         try:
                             dt = datetime.strptime(meta[key], "%Y:%m:%d %H:%M:%S")
                             self.photo_date = dt.strftime("%Y%m%d")
                             return self.photo_date
                         except Exception as e:
-                            print(f"Error parsing date string: {e}")
+                            print(f"Error parsing {key}: {e}")
                             return None
-                print("No valid EXIF date field found in photo metadata.")
+                print("No supported date field found in metadata.")
                 return None
 
         print("Photo not found in chunk or missing metadata.")
