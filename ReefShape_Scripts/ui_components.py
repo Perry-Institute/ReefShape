@@ -146,24 +146,26 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
         # After adding photos, attempt to auto-rename chunk if default name
         if self.parent.chunk.label.startswith("Chunk"):
-            try:
-                chunk = self.parent.chunk
-                photo_date = self.extract_photo_date(photo_list)
-                if photo_date:
-                    chunk.label = photo_date
-                    self.txtChunkName.setPlainText(photo_date)
-                    #Metashape.app.document.modified = True
-                    Metashape.app.update()
-                    QtWidgets.QApplication.processEvents()
-                    
-                    #force GUI refresh on PC
-                    Metashape.app.document.chunk = None
-                    Metashape.app.document.chunk = chunk
-                    
-                    self.chunkUpdated.emit()
-                    print(f"Chunk name auto-renamed to photo date: {photo_date}")
-            except Exception as e:
-                print(f"Failed to auto-rename chunk from EXIF date: {e}")
+            def delayed_rename():
+                try:
+                    chunk = self.parent.chunk
+                    photo_date = self.extract_photo_date(photo_list)
+                    if photo_date:
+                        chunk.label = photo_date
+                        self.txtChunkName.setPlainText(photo_date)
+
+                        # Force GUI refresh
+                        Metashape.app.document.chunk = chunk
+                        QtWidgets.QApplication.processEvents()
+
+                        self.chunkUpdated.emit()
+                        print(f"Chunk name auto-renamed to photo date: {photo_date}")
+                except Exception as e:
+                    print(f"Failed to auto-rename chunk from EXIF date: {e}")
+
+            # ✅ Delay execution slightly to let Metashape finish loading
+            QtCore.QTimer.singleShot(250, delayed_rename)
+        
 
 
     def getProjectName(self):
@@ -196,13 +198,12 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         if(self.checkNaming(new_name) and new_name and ok):
             self.chunk_name = new_name
             Metashape.app.document.chunk.label = new_name
-            #Metashape.app.document.modified = True
             Metashape.app.update()
             QtWidgets.QApplication.processEvents()
             
-            #force GUI refresh on PC
-            Metashape.app.document.chunk = None
+            # Force GUI refresh
             Metashape.app.document.chunk = chunk
+            QtWidgets.QApplication.processEvents()
             
             self.chunkUpdated.emit()
         elif(not self.checkNaming(new_name) and ok):
