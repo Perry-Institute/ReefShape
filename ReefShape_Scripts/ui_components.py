@@ -242,6 +242,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             return None
         '''
     def extract_photo_date(self, photo_list):
+        import os
         doc = Metashape.app.document
         chunk = doc.chunk
 
@@ -249,23 +250,28 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             print("No photos or chunk found.")
             return None
 
-        for cam in chunk.cameras:
-            if cam.label == photo_list[0] and cam.photo and cam.photo.meta:
-                meta = cam.photo.meta
-                for key in ["Exif/DateTimeOriginal", "Exif/DateTime", "System/FileModifyDate"]:
-                    if key in meta:
-                        try:
-                            dt = datetime.strptime(meta[key], "%Y:%m:%d %H:%M:%S")
-                            self.photo_date = dt.strftime("%Y%m%d")
-                            return self.photo_date
-                        except Exception as e:
-                            print(f"Error parsing {key}: {e}")
-                            return None
-                print("No supported date field found in metadata.")
-                return None
+        input_path = os.path.abspath(photo_list[0])
 
-        print("Photo not found in chunk or missing metadata.")
+        for cam in chunk.cameras:
+            if cam.photo and cam.photo.path:
+                cam_path = os.path.abspath(cam.photo.path)
+                if cam_path == input_path and cam.photo.meta:
+                    meta = cam.photo.meta
+                    for key in ["Exif/DateTimeOriginal", "Exif/DateTime", "System/FileModifyDate"]:
+                        if key in meta:
+                            try:
+                                dt = datetime.strptime(meta[key], "%Y:%m:%d %H:%M:%S")
+                                self.photo_date = dt.strftime("%Y%m%d")
+                                return self.photo_date
+                            except Exception as e:
+                                print(f"Error parsing {key}: {e}")
+                                return None
+                    print("No supported date field found in metadata.")
+                    return None
+
+        print("Photo path not found in chunk or photo missing metadata.")
         return None
+    
 
 
 class BoundaryMarkerDlg(QtWidgets.QDialog):
