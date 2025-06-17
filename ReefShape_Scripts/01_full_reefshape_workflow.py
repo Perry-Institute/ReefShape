@@ -585,6 +585,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def refreshChunkNameDisplay(self):
         if self.doc.chunk:
+            self.txtChunkName.setPlainText(self.doc.chunk.label)
             self.addphotos_groupbox.txtChunkName.setPlainText(self.doc.chunk.label)
     
     def createScalebars(self, path):
