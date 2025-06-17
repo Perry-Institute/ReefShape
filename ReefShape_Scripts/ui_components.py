@@ -147,13 +147,19 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         # After adding photos, attempt to auto-rename chunk if default name
         if self.parent.chunk.label.startswith("Chunk"):
             try:
+                chunk = self.parent.chunk
                 photo_date = self.extract_photo_date(photo_list)
                 if photo_date:
-                    self.parent.chunk.label = photo_date
+                    chunk.label = photo_date
                     self.txtChunkName.setPlainText(photo_date)
                     #Metashape.app.document.modified = True
                     Metashape.app.update()
                     QtWidgets.QApplication.processEvents()
+                    
+                    #force GUI refresh on PC
+                    Metashape.app.document.chunk = None
+                    Metashape.app.document.chunk = chunk
+                    
                     self.chunkUpdated.emit()
                     print(f"Chunk name auto-renamed to photo date: {photo_date}")
             except Exception as e:
@@ -193,6 +199,11 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
             #Metashape.app.document.modified = True
             Metashape.app.update()
             QtWidgets.QApplication.processEvents()
+            
+            #force GUI refresh on PC
+            Metashape.app.document.chunk = None
+            Metashape.app.document.chunk = chunk
+            
             self.chunkUpdated.emit()
         elif(not self.checkNaming(new_name) and ok):
             Metashape.app.messageBox("Unable to rename chunk: please select a name that includes only alphanumeric characters (abcABC123) and underscore (_) or dash (-), with no special characters (e.g. @$/.)")
