@@ -584,9 +584,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         print("Project Saved")
 
     def refreshChunkNameDisplay(self):
-        if self.doc.chunk:
-            self.txtChunkName.setPlainText(self.doc.chunk.label)
-            self.addphotos_groupbox.txtChunkName.setPlainText(self.doc.chunk.label)
+        try:
+            chunk = self.doc.chunk
+            if hasattr(self, "txtChunkName"):
+                self.txtChunkName.setPlainText(chunk.label)
+            if hasattr(self, "add_photos_groupbox") and hasattr(self.add_photos_groupbox, "txtChunkName"):
+                self.add_photos_groupbox.txtChunkName.setPlainText(chunk.label)
+        except Exception as e:
+            print(f"Error updating chunk name in GUI: {e}")
+    
     
     def createScalebars(self, path):
         '''
