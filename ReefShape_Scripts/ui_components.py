@@ -20,16 +20,6 @@ import re
 from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 from PySide2.QtCore import Signal
-try:
-    import exifread
-except ImportError:
-    import subprocess
-    import sys
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "exifread"])
-        import exifread
-    except Exception as e:
-        raise ImportError(f"Failed to install exifread: {str(e)}")
 
 class AddPhotosGroupBox(QtWidgets.QGroupBox):
     '''
@@ -231,7 +221,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         else:
             Metashape.app.messageBox("Unable to save project: please select a name and file path for the project")
 
-    def extract_photo_date(self, photo_list):
+    '''def extract_photo_date(self, photo_list):
         doc = Metashape.app.document
         chunk = doc.chunk
         photo_path = photo_list[0]
@@ -250,7 +240,32 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         except Exception as e:
             print(f"Failed to extract photo date: {e}")
             return None
-        
+        '''
+    def extract_photo_date(self, photo_list):
+        doc = Metashape.app.document
+        chunk = doc.chunk
+
+        if not photo_list or not chunk:
+            print("No photos or chunk found.")
+            return None
+
+        for cam in chunk.cameras:
+            if cam.label == photo_list[0] and cam.photo and cam.photo.meta:
+                meta = cam.photo.meta
+                for key in ["Exif/DateTimeOriginal", "Exif/CreateDate", "Exif/DateTime"]:
+                    if key in meta:
+                        try:
+                            dt = datetime.strptime(meta[key], "%Y:%m:%d %H:%M:%S")
+                            self.photo_date = dt.strftime("%Y%m%d")
+                            return self.photo_date
+                        except Exception as e:
+                            print(f"Error parsing date string: {e}")
+                            return None
+                print("No valid EXIF date field found in photo metadata.")
+                return None
+
+        print("Photo not found in chunk or missing metadata.")
+        return None
 
 
 class BoundaryMarkerDlg(QtWidgets.QDialog):
