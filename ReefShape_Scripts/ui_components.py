@@ -214,6 +214,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         new_name, ok = QtWidgets.QInputDialog().getText(self, "Create Chunk", "Chunk name:")
         if(self.checkNaming(new_name) and new_name and ok):
             self.chunk_name = new_name
+            chunk = Metashape.app.document.chunk
             Metashape.app.document.chunk.label = new_name
             Metashape.app.update()
             QtWidgets.QApplication.processEvents()
