@@ -146,25 +146,42 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
 
         # After adding photos, attempt to auto-rename chunk if default name
         if self.parent.chunk.label.startswith("Chunk"):
+
+            # Create a deep copy of photo_list to ensure it's captured correctly inside the delayed function
+            captured_photo_list = list(photo_list)
+
             def delayed_rename():
                 try:
-                    chunk = self.parent.chunk
-                    photo_date = self.extract_photo_date(photo_list)
-                    if photo_date:
-                        chunk.label = photo_date
-                        self.txtChunkName.setPlainText(photo_date)
+                    doc = Metashape.app.document
+                    chunk = doc.chunk  # Always re-fetch the active chunk
+                    cameras = chunk.cameras
 
-                        # Force GUI refresh
-                        Metashape.app.document.chunk = chunk
-                        QtWidgets.QApplication.processEvents()
+                    if not cameras:
+                        print("No cameras found in chunk after delay.")
+                        return
 
-                        self.chunkUpdated.emit()
-                        print(f"Chunk name auto-renamed to photo date: {photo_date}")
+                    photo_path = os.path.abspath(captured_photo_list[0])
+                    for cam in cameras:
+                        if cam.photo and os.path.abspath(cam.photo.path) == photo_path:
+                            for key in ["Exif/DateTimeOriginal", "Exif/DateTime", "System/FileModifyDate"]:
+                                if key in cam.photo.meta:
+                                    dt = datetime.strptime(cam.photo.meta[key], "%Y:%m:%d %H:%M:%S")
+                                    photo_date = dt.strftime("%Y%m%d")
+
+                                    chunk.label = photo_date
+                                    self.txtChunkName.setPlainText(photo_date)
+                                    Metashape.app.document.chunk = chunk
+                                    QtWidgets.QApplication.processEvents()
+                                    self.chunkUpdated.emit()
+                                    print(f" Chunk successfully renamed to: {photo_date}")
+                                    return
+                    print("Failed to match photo to camera or extract metadata.")
+
                 except Exception as e:
-                    print(f"Failed to auto-rename chunk from EXIF date: {e}")
+                    print(f"Exception in delayed rename: {e}")
 
-            # ✅ Delay execution slightly to let Metashape finish loading
-            QtCore.QTimer.singleShot(250, delayed_rename)
+            # Delay long enough to allow internal photo/meta processing to complete
+            QtCore.QTimer.singleShot(500, delayed_rename)
         
 
 
