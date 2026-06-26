@@ -232,7 +232,7 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         '''
         Checks project and chunk names to ensure there are no special characters in them
         '''
-        if(re.search("[\.\^\$\*\+\?\[\]\|\<\>&\\\]", name)):
+        if(re.search(r"[.\^$*+?\[\]|<>&\\]", name)):
             return False
         return True
 
@@ -425,9 +425,7 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
 
         # ---- connect signals and slots ----
         self.btnOk.clicked.connect(self.ok)
-        QtCore.QObject.connect(self.btnClose, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
-
-        self.exec()
+        self.btnClose.clicked.connect(self.reject)
 
     def ok(self):
         '''
@@ -610,8 +608,8 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         self.setLayout(reference_layout)
 
         # ---- Connect Signals and Slots ----
-        QtCore.QObject.connect(self.btnScaleFile, QtCore.SIGNAL("clicked()"), self.getScaleFile)
-        QtCore.QObject.connect(self.btnGeoFile, QtCore.SIGNAL("clicked()"), self.getGeoFile)
+        self.btnScaleFile.clicked.connect(self.getScaleFile)
+        self.btnGeoFile.clicked.connect(self.getGeoFile)
         self.comboReference.currentIndexChanged.connect(self.onReferenceChanged)
         self.comboTargetType.currentIndexChanged.connect(self.onTargetTypeChange)
         self.btnMarkerPosition.clicked.connect(self.getMarkerPosition)
@@ -657,6 +655,7 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         corner markers.
         '''
         marker_dlg = BoundaryMarkerDlg(self.parent)
+        marker_dlg.exec()
         self.corner_markers = marker_dlg.corner_markers
 
     def onTargetTypeChange(self):

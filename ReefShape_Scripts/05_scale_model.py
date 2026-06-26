@@ -96,5 +96,6 @@ def Create_Scalebars():
    Metashape.app.update()
    print("Script finished")
 label = "ReefShape/Tools/Create Scalebars from Targets"
+Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, Create_Scalebars)
 

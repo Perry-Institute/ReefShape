@@ -4,7 +4,9 @@
   <img src="https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1" alt="ReefShape Logo" width="400"/> 
 </p>
 
-<b>NEW (JUNE 2025): ✨Introducing ReefShape v1.2!✨ The new version contains a number of improvements to functionality and some bug fixes. It also comes with installer files for Windows and Mac to make it easier to get ReefShape up and running. [See the full changelog here.](CHANGELOG.md)</b> 
+<b>NEW (JUNE 2026): ✨ReefShape v1.3 is out!✨ This release adds compatibility with Agisoft Metashape 2.3, which renamed and removed a few arguments in its Python API. ReefShape now works on Metashape 2.0 through 2.3 from a single codebase. [See the full changelog here.](CHANGELOG.md)</b>
+
+<b>JUNE 2025: Introducing ReefShape v1.2! Includes a number of improvements to functionality, bug fixes, and installer files for Windows and Mac.</b> 
 
 ReefShape is a methodology for underwater photogrammetry or Large-Area Imaging developed specifically for coral reef monitoring. This GitHub repository acts as a landing page for ReefShape, and includes instructional materials on the methodology, sample files, and processing scripts. The key feature or ReefShape is <b>robust, automated photogrammetry data processing</b> using our custom pipeline that's driven by python scripts for the efficient processing of georeferenced, time-series coral reef photomosaics using Agisoft Metashape Professional. ReefShape was created by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>. 
 

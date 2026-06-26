@@ -32,4 +32,5 @@ def clean_project():
     print("Script finished")
 
 label = "ReefShape/Tools/Clean Project"
+Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, clean_project)

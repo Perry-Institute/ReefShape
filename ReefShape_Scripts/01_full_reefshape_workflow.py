@@ -59,7 +59,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowModality(QtCore.Qt.ApplicationModal)
+        # QDialog.exec() already provides modal behavior. Setting ApplicationModal
+        # on top deadlocks Metashape's Light/Dark themes (custom QStyles install
+        # application-level event filters that conflict with ApplicationModal).
         self.setWindowTitle("Full ReefShape Workflow")
 
         # ----- Build Widgets -----
@@ -232,13 +234,28 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # adjust size and position of main widget
         self.setMinimumSize(main_widget.frameGeometry().width(), 0.6*parent.frameGeometry().height())
-        # determining the actual width needed to display the widget without cutting it off or leaving extra space is
-        # surprisingly difficult because of the padding and margin space between nested widgets - this workaround was found by trial and error
-        width = (scroll_area.frameGeometry().width() + main_widget.frameGeometry().width()) / 2
+        # frameGeometry() before show() doesn't include the scrollbar gutter or
+        # the window chrome, so it systematically underestimates the width the
+        # dialog actually needs. Use the larger of the two measurements (the
+        # original code averaged them, which clipped the right edge — the
+        # rightmost buttons like "Adjust Corner Markers" lost their last few
+        # characters and a spurious horizontal scrollbar appeared) and add a
+        # safety margin to cover the scrollbar and chrome pixels.
+        width = max(scroll_area.frameGeometry().width(),
+                    main_widget.frameGeometry().width()) + 30
+        # Height: prefer the actual content height (form + OK/Close row + a
+        # little chrome) rather than a fixed fraction of the parent. The old
+        # code hard-coded 0.85 * parent height, which on tall monitors leaves
+        # a big black empty box below the form. Cap at 0.85 * parent so we
+        # don't exceed the screen when the form is unusually tall.
+        content_height = main_widget.frameGeometry().height() + 80
+        max_height = 0.85 * parent.frameGeometry().height()
+        height = min(content_height, max_height)
         x = parent.frameGeometry().width()/2.0 - width/2 # set starting position so that widget is roughly centered on screen
         if(x<0): x = 0
-        y = parent.frameGeometry().height()/2.0 - 0.4*parent.frameGeometry().height()
-        self.setGeometry(parent.frameGeometry().x() + x, parent.frameGeometry().y() + y, width, 0.85*parent.frameGeometry().height())
+        y = parent.frameGeometry().height()/2.0 - height/2
+        if(y<0): y = 0
+        self.setGeometry(parent.frameGeometry().x() + x, parent.frameGeometry().y() + y, width, height)
 
         # --- Connect signals and slots ---
         # these two syntaxes for connecting signals to slots should be equivalent, but the first method (dot notation) may make it easier
@@ -247,10 +264,9 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.btnOutputDir.clicked.connect(self.getOutputDir)
         #self.btnCRS.clicked.connect(self.getCRS)
 
-        QtCore.QObject.connect(self.btnOk, QtCore.SIGNAL("clicked()"), self.runWorkFlow)
-        QtCore.QObject.connect(self.btnQuit, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
+        self.btnOk.clicked.connect(self.runWorkFlow)
+        self.btnQuit.clicked.connect(self.reject)
         self.loadSettings()
-        self.exec()
         
     def loadSettings(self):
         """Load saved settings using QSettings."""
@@ -340,12 +356,22 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                             self.georef_groupbox.spinboxXAcc.value(), self.georef_groupbox.spinboxYAcc.value(),
                             self.georef_groupbox.spinboxZAcc.value(), self.georef_groupbox.spinboxSkipRows.value()]
         self.corner_markers = self.georef_groupbox.corner_markers
-        if(self.chunk.tie_points and not self.chunk.meta['init_tie_points']):
-            self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
         
         
         ###### 1. Align & Scale ######
         # a. Align photos
+        # Markers may have been imported from a prior timepoint (via the Align
+        # Timepoints script) before alignment runs. If any of those markers
+        # physically shifted between timepoints, their image-space projections
+        # are inconsistent across photos and can break alignment / pull camera
+        # optimization toward a worse solution. To avoid this, we disable every
+        # existing marker before alignment and restore each marker's original
+        # enabled state once camera optimization is complete.
+        suppressed_markers = []  # list of (marker, original_enabled) tuples
+        if(self.chunk.tie_points == None):
+            for m in self.chunk.markers:
+                suppressed_markers.append((m, m.enabled))
+                m.enabled = False
         if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
             self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = generic_preselect,
                               reference_preselection=True, filter_mask=False, mask_tiepoints=True,
@@ -354,7 +380,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=True, subdivide_task=True)
             #second alignment step sometimes adds extra photos to the alignment that were missed on the first pass
             self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
-            self.chunk.meta['init_tie_points'] = str(len(self.chunk.tie_points.points))
             self.updateAndSave()
             print(" --- Initial alignment completed -- Refining alignment --- ")
 
@@ -406,11 +431,22 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         if(self.chunk.model == None):
-            # d. optimize camera alignment - only optimize if there isn't already a model, and if the current
-            # number of tie points is not less than the inital number - prevents optimizing twice
-            if(not len(self.chunk.tie_points.points) < int(self.chunk.meta['init_tie_points'])):
+            # d. optimize camera alignment - skip if optimization has already been run
+            # (manually or by a previous script run). Metashape writes 'optimize/fit_*'
+            # keys to chunk.tie_points.meta whenever optimizeCameras() executes, so
+            # presence of any 'optimize/' key is a reliable signal.
+            if not self.isOptimized():
                 self.gradSelectsOptimization()
                 print( " --- Camera Optimization Complete --- ")
+                self.updateAndSave()
+
+            # Restore enabled state for any markers we suppressed before alignment.
+            # Now that alignment and optimization are done, marker georef is needed
+            # for the chunk transform, boundary creation, and downstream exports.
+            if suppressed_markers:
+                for m, original_enabled in suppressed_markers:
+                    m.enabled = original_enabled
+                suppressed_markers.clear()
                 self.updateAndSave()
 
             ###### 2. Generate products ######
@@ -457,29 +493,43 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # b. build orthomosaic and DEM
         
         if(self.chunk.elevation == None):
-            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = Metashape.EnabledInterpolation, flip_x=False, flip_y=False, flip_z=False,
+            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = Metashape.EnabledInterpolation,
                            resolution=ORTHO_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
             print(" --- Hi-Res DEM Built --- ")
             
             
         if(self.chunk.orthomosaic == None):
             self.chunk.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ElevationData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
-                                   cull_faces=False, refine_seamlines=False, flip_x=False, flip_y=False, flip_z=False, subdivide_task=True,
+                                   cull_faces=False, refine_seamlines=False, subdivide_task=True,
                                    workitem_size_cameras=20, workitem_size_tiles=10, max_workgroup_size=100)
             print(" --- Orthomosaic Built --- ")
 
             self.updateAndSave()
-            
-#        if self.chunk.elevation:
-#            # Delete the DEM and then rebuild at normal resolution
-#            self.chunk.elevation = None
-#            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = INTERPOLATION, flip_x=False, flip_y=False, flip_z=False,
-#                           resolution=DEM_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
-#            print(" --- DEM Built --- ")
+
+            # Replace the high-res DEM with one at 1/4 the ortho resolution.
+            # The ortho-resolution DEM was needed only to avoid resampling artifacts
+            # while building the ortho; for storage and downstream use, a coarser
+            # DEM is fine and saves significant disk space. Rebuilds from the mesh
+            # (rather than resampling the existing DEM) so the result is clean.
+            ortho_cell = self.chunk.orthomosaic.resolution
+            dem_resample_res = ortho_cell * 4
+            self.chunk.elevation = None
+            self.chunk.buildDem(source_data=Metashape.ModelData, interpolation=Metashape.EnabledInterpolation,
+                                resolution=dem_resample_res, subdivide_task=True,
+                                workitem_size_tiles=10, max_workgroup_size=100)
+            print(" --- DEM resampled to {:.4f} m for storage --- ".format(dem_resample_res))
+            self.updateAndSave()
 
 
-        # c. create boundary
-        if(not self.chunk.shapes):
+        # c. create boundary (skip if an outer boundary already exists, e.g.
+        # copied from a reference chunk by the Align Timepoints script)
+        has_outer_boundary = False
+        if self.chunk.shapes:
+            for shape in self.chunk.shapes:
+                if shape.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
+                    has_outer_boundary = True
+                    break
+        if not has_outer_boundary:
             self.boundaryCreation()
             print(" --- Boundary Polygon Created ---")
 
@@ -492,6 +542,12 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         jpg.jpeg_quality = 90
         jpg.tiff_big = True
         jpg.tiff_overviews = True
+        # Write the TIFF as tiled rather than stripped. JPEG-compressed TIFF
+        # strips are capped at 65500 px per libtiff, which orthomosaics of
+        # high-res reef plots routinely exceed. Tiled JPEG compresses each
+        # internal tile independently (typically 256/512 px) so the limit
+        # doesn't apply. GIS software reads tiled and stripped TIFFs the same.
+        jpg.tiff_tiled = True
         #lzw for DEM and TagLab products
         lzw = Metashape.ImageCompression()
         lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
@@ -513,13 +569,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
                 # Export report
                 human_date = self.format_date_label(self.chunk.label)
+                # Metashape 2.3 renamed include_system_info -> save_system_info
+                ms_version = tuple(int(p) for p in Metashape.app.version.split(".")[:2])
+                system_info_kwarg = "save_system_info" if ms_version >= (2, 3) else "include_system_info"
                 self.chunk.exportReport(
                     path=report_path,
                     title=self.project_name,
-                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\nCreated with ReefShape v1.2\nProcessed on:",
+                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\nCreated with ReefShape v1.3\nProcessed on:",
                     font_size=12,
                     page_numbers=True,
-                    include_system_info=True 
+                    **{system_info_kwarg: True}
                 )
 
                 # --- Restore original boundary types ---
@@ -742,6 +801,23 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
 
+    def isOptimized(self):
+        '''
+        Returns True if camera optimization has already been performed on the
+        current chunk (manually via the Metashape GUI or by an earlier run of
+        this script). Detection works by checking for 'optimize/' keys in
+        chunk.tie_points.meta — Metashape writes these whenever optimizeCameras
+        runs, so the signal is independent of how optimization was triggered.
+        '''
+        tp = self.chunk.tie_points
+        if not tp:
+            return False
+        try:
+            return any(k.startswith('optimize/') for k in tp.meta.keys())
+        except AttributeError:
+            return False
+
+
     def gradSelectsOptimization(self):
         '''
         Refines camera alignment by filtering out tie points with high error
@@ -806,7 +882,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         m_list = []
         for corner_num in self.corner_markers:
             for marker in self.chunk.markers:
-                if(str(corner_num) == re.search('(\d+)', marker.label).group(0)):
+                if(str(corner_num) == re.search(r'(\d+)', marker.label).group(0)):
                     m_list.append(marker)
         m_list_short = m_list[:4]
         self.create_shape_from_markers(m_list_short)
@@ -870,8 +946,9 @@ def run_script():
         app = QtWidgets.QApplication.instance()
         parent = app.activeWindow()
         dlg = FullWorkflowDlg(parent)
+        dlg.exec()
     except Exception as e:
-        show_error_dialog("Workflow Error", str(e))    
+        show_error_dialog("Workflow Error", str(e))
             
     
 

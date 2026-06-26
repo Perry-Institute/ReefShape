@@ -30,7 +30,9 @@ class AlignChunksDlg(QtWidgets.QDialog):
     def __init__(self, parent):
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowModality(QtCore.Qt.ApplicationModal)
+        # QDialog.exec() already provides modal behavior. Setting ApplicationModal
+        # on top deadlocks Metashape's Light/Dark themes (custom QStyles install
+        # application-level event filters that conflict with ApplicationModal).
         self.setWindowTitle("Align Chunks")
         self.setMinimumWidth(500)
         # set document info
@@ -158,10 +160,7 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.comboTargetType.currentIndexChanged.connect(self.onTargetTypeChange)
         self.btnRemoveMarker.clicked.connect(self.removeDamagedMarker)
         self.btnOk.clicked.connect(self.alignChunks)
-        QtCore.QObject.connect(self.btnClose, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("reject()"))
-
-
-        self.exec()
+        self.btnClose.clicked.connect(self.reject)
 
     def alignChunks(self):
         '''
@@ -198,8 +197,44 @@ class AlignChunksDlg(QtWidgets.QDialog):
                     marker.reference.accuracy = [1, 1, 1]
 
         self.chunk.updateTransform()
+
+        # Copy the outer boundary polygon from the reference chunk so the full
+        # workflow can skip boundary regeneration when it runs on this chunk.
+        # No-op if the reference chunk has no outer boundary, or if the target
+        # chunk already has one (e.g. from a previous align_timepoints run).
+        self.copyOuterBoundary()
+
         self.updateAndSave()
         self.reject()
+
+    def copyOuterBoundary(self):
+        '''
+        Copies the OuterBoundary polygon (if any) from self.reference_chunk into
+        self.chunk. Mirrors the logic in 06_copy_boundary.py so users get the
+        same result whether they invoke the standalone tool or rely on Align
+        Timepoints to do it automatically.
+        '''
+        if not self.reference_chunk.shapes:
+            return
+        source_outer = next(
+            (s for s in self.reference_chunk.shapes
+             if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary),
+            None
+        )
+        if source_outer is None:
+            return
+        if self.chunk.shapes:
+            for s in self.chunk.shapes:
+                if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
+                    return  # target already has an outer boundary; leave it alone
+        else:
+            self.chunk.shapes = Metashape.Shapes()
+            self.chunk.shapes.crs = self.reference_chunk.shapes.crs
+        copied = self.chunk.shapes.addShape()
+        copied.label = "Copied Boundary"
+        copied.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
+        copied.geometry = source_outer.geometry
+        print(" --- Outer boundary copied from reference chunk --- ")
 
     def updateAndSave(self):
         ''' saves changes to the project and updates the user interface '''
@@ -367,6 +402,7 @@ def run_script():
         app = QtWidgets.QApplication.instance()
         parent = app.activeWindow()
         dlg = AlignChunksDlg(parent)
+        dlg.exec()
     except Exception as e:
         QtWidgets.QMessageBox.critical(None, "Error", str(e))
         

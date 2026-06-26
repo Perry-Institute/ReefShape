@@ -40,4 +40,5 @@ def gradSelectsOptimization():
     print("Script finished")
 
 label = "ReefShape/Tools/Optimize Cameras and Model"
+Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, gradSelectsOptimization)
