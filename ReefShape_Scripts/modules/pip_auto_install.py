@@ -124,18 +124,56 @@ def _distributions_installed_in(target: str) -> set:
         return set()
 
 
+def _marker_applies(marker_str: str) -> bool:
+    """Best-effort PEP 508 environment-marker evaluation.
+
+    Returns True if the marker applies on the current interpreter (i.e. pip
+    would install the requirement here). For unrecognized markers we return
+    True so the requirement is treated as in-scope and pip remains the
+    fallback authority — better to do an unnecessary pip check than to skip
+    a requirement we should have tracked.
+
+    Without this, `pywin32==306; sys_platform == 'win32'` causes the parser
+    to yield `pywin32` on every platform; on macOS/Linux pip correctly skips
+    installing it, so it never appears in the install dir, so the missing-set
+    is non-empty every startup and pip is re-invoked forever.
+    """
+    marker_str = marker_str.strip()
+    if not marker_str:
+        return True
+    # Preferred path: packaging.markers is part of pip's vendored stack and
+    # usually importable from Metashape's Python.
+    try:
+        from packaging.markers import Marker  # type: ignore
+        return bool(Marker(marker_str).evaluate())
+    except Exception:
+        pass
+    # Fallback for the only marker ReefShape actually uses today.
+    m = re.match(r"sys_platform\s*(==|!=)\s*['\"]([^'\"]+)['\"]\s*$", marker_str)
+    if m:
+        op, value = m.group(1), m.group(2)
+        return (sys.platform == value) if op == "==" else (sys.platform != value)
+    return True
+
+
 def _parse_requirement_names(requirements_txt: str):
-    """Yield the distribution name for each requirement line.
+    """Yield the distribution name for each requirement line that applies
+    on this interpreter.
 
     We only need names accurate enough to skip pip when nothing is missing —
-    full PEP 508 parsing isn't worth pulling in `packaging` for.
+    full PEP 508 parsing isn't worth pulling in `packaging` for, but we do
+    need to honor the environment marker so platform-gated requirements
+    don't trigger a re-install every startup on the platforms that skip them.
     """
     for raw_line in requirements_txt.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        # Drop environment markers (everything after `;`)
-        line = line.split(";", 1)[0].strip()
+        if ";" in line:
+            head, marker = line.split(";", 1)
+            if not _marker_applies(marker):
+                continue
+            line = head.strip()
         if not line:
             continue
         # Distribution name is the leading run of name-chars (letters, digits,
