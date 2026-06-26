@@ -33,17 +33,42 @@ if exist "%TARGET%\modules" (
     echo Removing stale modules folder: %TARGET%\modules
     rmdir /S /Q "%TARGET%\modules"
 )
+REM The list below intentionally includes BOTH the current filenames AND
+REM every filename used in any prior released version of ReefShape. Scripts
+REM have been renumbered between releases, and xcopy won't remove files that
+REM no longer exist in the source — so listing the union ensures a clean
+REM target regardless of which past version the user is reinstalling over.
+REM Comments inside the for-loop parentheses get parsed as iteration items
+REM in cmd.exe, so the section headers live up here:
+REM   Current numbering (v1.3+):
+REM     01_full_reefshape_workflow, 02_align_chunks, 03_align_chunks_ICP,
+REM     04_optimization_process, 05_scale_model, 06_create_boundary,
+REM     07_copy_boundary, 08_create_boundary_from_photos,
+REM     09_calculate_area_ratio, 10_clean_project
+REM   Pre-renumber historical names:
+REM     02a_align_chunks_ICP, 03_optimization_process, 04_scale_model,
+REM     05_create_boundary, 06_copy_boundary, 07_calculate_area_ratio,
+REM     08_clean_project, 09_create_boundary_from_photos
+REM   Shared helper: ui_components
 for %%F in (
     "01_full_reefshape_workflow.py"
     "02_align_chunks.py"
     "02a_align_chunks_ICP.py"
+    "03_align_chunks_ICP.py"
     "03_optimization_process.py"
+    "04_optimization_process.py"
     "04_scale_model.py"
+    "05_scale_model.py"
     "05_create_boundary.py"
+    "06_create_boundary.py"
     "06_copy_boundary.py"
+    "07_copy_boundary.py"
     "07_calculate_area_ratio.py"
+    "09_calculate_area_ratio.py"
     "08_clean_project.py"
+    "10_clean_project.py"
     "09_create_boundary_from_photos.py"
+    "08_create_boundary_from_photos.py"
     "ui_components.py"
 ) do (
     if exist "%TARGET%\%%~F" (
