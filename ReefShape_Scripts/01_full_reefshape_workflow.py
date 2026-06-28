@@ -14,11 +14,19 @@ import Metashape
 from os import path
 import sys
 import csv
+import json
 import re
 #import exifread
 from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets
-from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, GeoreferenceGroupBox
+from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
+
+
+# Sentinel value used as a dropdown entry that, when selected, opens
+# Metashape's native coordinate-system picker. Selecting it doesn't itself
+# set a CRS — the picker either returns one (added to the dropdown) or the
+# selection reverts to whatever was selected before.
+MORE_CRS_SENTINEL = "More…"  # "More..." with a single-char ellipsis
 
 #function to display message boxes for errors
 def show_error_dialog(title, exception):
@@ -69,15 +77,62 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # and modified by slots that are outside of the constructor
         # -- General --
         
-        # Coordinate system input
-        self.labelCRS = QtWidgets.QLabel("Coordinate System:")
+        # Coordinate system input. The label includes the chunk's current CRS
+        # name so the active value stays visible even when the panel is
+        # collapsed; the dropdown next to it still lets the user switch
+        # between the two built-in options, any previously-picked custom
+        # options, or "More…" to open Metashape's native CRS picker.
+        self.labelCRS = QtWidgets.QLabel(self._crsLabelText())
         self.comboCRS = QtWidgets.QComboBox()
-        self.comboCRS.addItems(self.crs_options.keys())
+        self.comboCRS.setToolTip(
+            "This chunk's CRS will be changed to the currently selected "
+            "value upon initiating the workflow")
 
-        # Set default selection based on saved value or default to second entry
+        # Load any user-added CRSes from QSettings so they persist across
+        # sessions. Stored as a JSON list of WKT strings keyed by display
+        # name. Invalid entries are silently skipped — a bad save shouldn't
+        # break the dialog.
+        for label, crs in self._loadUserCRSes().items():
+            if crs.wkt not in {c.wkt for c in self.crs_options.values()}:
+                self.crs_options[label] = crs
+
+        # If the chunk's current CRS isn't represented in the dropdown,
+        # add it as a session-only option so the dropdown can reflect the
+        # chunk's actual state. We do *not* persist this one — it might be a
+        # one-off CRS the user inherited with the project and never wants
+        # to see again on other projects.
+        if (self.chunk and self.chunk.crs
+                and not any(crs.wkt == self.chunk.crs.wkt for crs in self.crs_options.values())):
+            chunk_label = self._uniqueCRSLabel(self.chunk.crs.name or "Project CRS")
+            self.crs_options[chunk_label] = self.chunk.crs
+
+        # Build the dropdown: every known CRS, followed by the sentinel.
+        self.comboCRS.addItems(list(self.crs_options.keys()))
+        self.comboCRS.addItem(MORE_CRS_SENTINEL)
+
+        # Pick the initial dropdown selection: prefer the chunk's current CRS
+        # if it matches a known option (so the dropdown reflects what's
+        # actually applied), then fall back to the user's last saved
+        # preference, then to the default. The chunk's CRS is *not* modified
+        # here — applying the dropdown to the chunk happens only when the
+        # user clicks OK (see runWorkFlow).
+        chunk_wkt = self.chunk.crs.wkt if (self.chunk and self.chunk.crs) else None
         saved_wkt = self.settings.value("coordinate_system", self.defaultCRS.wkt)
-        default_index = list(self.crs_options.values()).index(next((crs for crs in self.crs_options.values() if crs.wkt == saved_wkt), self.defaultCRS))
+        if chunk_wkt and any(crs.wkt == chunk_wkt for crs in self.crs_options.values()):
+            initial_wkt = chunk_wkt
+        else:
+            initial_wkt = saved_wkt
+        default_index = list(self.crs_options.values()).index(
+            next((crs for crs in self.crs_options.values() if crs.wkt == initial_wkt), self.defaultCRS)
+        )
         self.comboCRS.setCurrentIndex(default_index)
+        # Track the last valid (non-sentinel) index so we can revert when
+        # the user opens the "More…" picker and cancels.
+        self._lastValidCRSIndex = default_index
+        self.comboCRS.currentIndexChanged.connect(self._onCRSChanged)
+        # Color the label green/red based on whether the dropdown matches
+        # the chunk's actual CRS (this is the "is a change pending?" hint).
+        self._refreshCRSColor()
         
         
         """old
@@ -183,6 +238,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         output_layout.addWidget(self.txtOutputDir)
         output_layout.addWidget(self.btnOutputDir)
 
+        # The three checkboxes that control export outputs used to live in the
+        # General panel; they're now in their own Export panel below.
         export_layout = QtWidgets.QHBoxLayout()
         export_layout.addWidget(self.checkBoxReport)
         export_layout.addWidget(self.checkBoxExport)
@@ -194,63 +251,114 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
 
         # -- Assemble sublayouts into groupboxes --
-        general_groupbox = QtWidgets.QGroupBox("General")
+        # NOTE: crs_layout is intentionally not added to General — it's
+        # inserted at the top of the Georeferencing panel further down
+        # (the CRS is conceptually a georeferencing setting).
+        self.general_groupbox = CollapsibleGroupBox("General")
         general_layout = QtWidgets.QVBoxLayout()
-        general_layout.addLayout(crs_layout)
         general_layout.addLayout(checkbox_layout)
         general_layout.addLayout(resolution_layout)
-        general_layout.addLayout(output_layout)
-        general_layout.addLayout(export_layout)
-        general_groupbox.setLayout(general_layout)
+        self.general_groupbox.setLayout(general_layout)
+
+        # Export panel: output folder selector + the three export checkboxes.
+        # Output folder is grouped here because it's only meaningful when at
+        # least one of the export options is enabled.
+        self.export_groupbox = CollapsibleGroupBox("Export")
+        export_outer = QtWidgets.QVBoxLayout()
+        export_outer.addLayout(output_layout)
+        export_outer.addLayout(export_layout)
+        self.export_groupbox.setLayout(export_outer)
 
 
         # -- Assemble groupboxes into main layout --
         self.addphotos_groupbox = AddPhotosGroupBox(self)
         self.addphotos_groupbox.chunkUpdated.connect(self.refreshChunkNameDisplay)
         self.georef_groupbox = GeoreferenceGroupBox(self)
+        # Insert the CRS row at the top of the Georeferencing panel. The CRS
+        # is conceptually a georeferencing setting (it tells Metashape how to
+        # interpret coordinates in the georef file) and grouping it here
+        # keeps related controls together. contentLayout() is the inner
+        # layout that holds the panel's actual rows.
+        self.georef_groupbox.contentLayout().insertLayout(0, crs_layout)
         if self.chunk and len(self.chunk.markers) == 0:
             QtCore.QTimer.singleShot(0, lambda: self.georef_groupbox.comboReference.setCurrentIndex(1))
                 #self.georef_groupbox.autoDetectMarkers = True
         main_layout.addWidget(self.addphotos_groupbox)
-        main_layout.addWidget(general_groupbox)
+        main_layout.addWidget(self.general_groupbox)
         main_layout.addWidget(self.georef_groupbox)
+        main_layout.addWidget(self.export_groupbox)
+        # Absorb vertical slack at the bottom so collapsed panels don't
+        # inflate gaps in the panels that are still expanded. Without this,
+        # the dialog's minimum height (set below) forces the QVBoxLayout to
+        # distribute extra space across the four groupboxes, and each
+        # groupbox in turn distributes it across its own rows.
+        main_layout.addStretch(1)
         # main_layout.addLayout(ok_layout)
+
+        # Now that every panel is built, set initial collapsed/grayed state
+        # based on what the chunk already contains. This is the "open by
+        # default unless the section is already done" UX. Done as a 0-delay
+        # singleShot so it runs after the dialog finishes painting; collapsing
+        # before the layout settles can leave residual whitespace.
+        QtCore.QTimer.singleShot(0, self._applyChunkStateDefaults)
+
+        # Resize the dialog to fit content whenever a panel collapses or
+        # expands. Deferred via singleShot so the layout has a chance to
+        # settle before adjustSize() reads the new sizeHint.
+        for panel in (self.addphotos_groupbox, self.general_groupbox,
+                      self.georef_groupbox, self.export_groupbox):
+            panel.toggled.connect(
+                lambda _checked: QtCore.QTimer.singleShot(0, self._fitToContent))
 
         # a somewhat complicated system of wrapper widgets is needed to accomodate the scroll layout
         # here is a summary of the structure:
         # main dialog(self) > scroll_layout > scroll_area > main_widget > main_layout
 
-        main_widget = QtWidgets.QWidget() # wrapper widget for scroll area
-        main_widget.setLayout(main_layout)
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
-        scroll_area.setWidget(main_widget)
-        scroll_area.setAlignment(QtCore.Qt.AlignHCenter)
+        self._main_widget = QtWidgets.QWidget() # wrapper widget for scroll area
+        self._main_widget.setLayout(main_layout)
+        self._scroll_area = QtWidgets.QScrollArea()
+        self._scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._scroll_area.setWidget(self._main_widget)
+        self._scroll_area.setAlignment(QtCore.Qt.AlignHCenter)
+        # Let the scroll area resize its inner widget horizontally to match
+        # the viewport. Without this, the inner widget keeps its initial
+        # natural width and the scroll area shows a horizontal scrollbar
+        # whenever the dialog is even one pixel narrower than that natural
+        # width (e.g. when macOS's window chrome accounting shaves a few
+        # pixels off the viewport).
+        self._scroll_area.setWidgetResizable(True)
         scroll_layout = QtWidgets.QVBoxLayout()
-        scroll_layout.addWidget(scroll_area)
+        scroll_layout.addWidget(self._scroll_area)
         scroll_layout.addLayout(ok_layout) # place run and close buttons outside of scroll area so theyre always visible
         ok_layout.setEnabled(True)
         self.setLayout(scroll_layout) # set wrapper layout for scroll area as main dialog layout
 
-        # adjust size and position of main widget
-        self.setMinimumSize(main_widget.frameGeometry().width(), 0.6*parent.frameGeometry().height())
-        # frameGeometry() before show() doesn't include the scrollbar gutter or
-        # the window chrome, so it systematically underestimates the width the
-        # dialog actually needs. Use the larger of the two measurements (the
-        # original code averaged them, which clipped the right edge — the
-        # rightmost buttons like "Adjust Corner Markers" lost their last few
-        # characters and a spurious horizontal scrollbar appeared) and add a
-        # safety margin to cover the scrollbar and chrome pixels.
-        width = max(scroll_area.frameGeometry().width(),
-                    main_widget.frameGeometry().width()) + 30
-        # Height: prefer the actual content height (form + OK/Close row + a
-        # little chrome) rather than a fixed fraction of the parent. The old
-        # code hard-coded 0.85 * parent height, which on tall monitors leaves
-        # a big black empty box below the form. Cap at 0.85 * parent so we
-        # don't exceed the screen when the form is unusually tall.
-        content_height = main_widget.frameGeometry().height() + 80
-        max_height = 0.85 * parent.frameGeometry().height()
+        # Pin the minimum width so the form stays readable; leave minimum
+        # height unconstrained so the dialog can shrink when panels collapse.
+        # Auto-resize on collapse/expand is wired further down via each
+        # panel's toggled signal.
+        #
+        # Width sizing: sizeHint() gives the form's natural width based on
+        # the layout system; frameGeometry() before show() is unreliable
+        # and systematically too small on macOS (window chrome and the
+        # vertical scrollbar gutter aren't accounted for). On macOS the
+        # scrollbar can overlay or take real space depending on user
+        # settings, so we ask QStyle for the actual extent rather than
+        # guessing.
+        sb_extent = QtWidgets.QApplication.style().pixelMetric(
+            QtWidgets.QStyle.PM_ScrollBarExtent)
+        natural_width = self._main_widget.sizeHint().width() + sb_extent + 20
+        self.setMinimumWidth(natural_width)
+
+        # Initial dialog geometry: position roughly centered on the Metashape
+        # main window, with the dialog height sized to the form's content.
+        # _fitToContent handles all later resize-on-collapse adjustments.
+        screen_h = (QtWidgets.QApplication.primaryScreen().availableGeometry().height()
+                    if QtWidgets.QApplication.primaryScreen() else parent.frameGeometry().height())
+        max_height = int(0.85 * screen_h)
+        content_height = self._main_widget.sizeHint().height() + 80
         height = min(content_height, max_height)
+        width = natural_width
         x = parent.frameGeometry().width()/2.0 - width/2 # set starting position so that widget is roughly centered on screen
         if(x<0): x = 0
         y = parent.frameGeometry().height()/2.0 - height/2
@@ -268,6 +376,207 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.btnQuit.clicked.connect(self.reject)
         self.loadSettings()
         
+    # ----- Dialog-state helpers -----
+
+    def _crsLabelText(self):
+        '''Label shown beside the CRS dropdown — includes the chunk's current
+        CRS name so the active value is visible at a glance, even when the
+        General panel is collapsed.'''
+        try:
+            current = self.chunk.crs.name if (self.chunk and self.chunk.crs) else None
+        except Exception:
+            current = None
+        if current:
+            return "Coordinate System (current: {}):".format(current)
+        return "Coordinate System:"
+
+    def _refreshCRSColor(self):
+        '''Color the CRS label green if the dropdown selection matches the
+        chunk's actual CRS (no change pending), red if they differ (the
+        chunk's CRS *will* change on OK).
+
+        Skips when the sentinel is somehow active — there's no real CRS
+        to compare against in that intermediate state.
+        '''
+        selected_label = self.comboCRS.currentText()
+        if selected_label not in self.crs_options:
+            return
+        chunk_wkt = self.chunk.crs.wkt if (self.chunk and self.chunk.crs) else ""
+        dropdown_wkt = self.crs_options[selected_label].wkt
+        color = "green" if dropdown_wkt == chunk_wkt else "red"
+        self.labelCRS.setStyleSheet("color: {};".format(color))
+
+    def _loadUserCRSes(self):
+        '''Read previously user-added CRSes from QSettings. Returns an ordered
+        dict of {display_name: CoordinateSystem}. Stored on disk as a JSON
+        list of [name, wkt] pairs — JSON survives QSettings cross-platform
+        type quirks (the bare `setValue(list)` path returns QVariant-wrapped
+        items on some platforms).'''
+        raw = self.settings.value("user_crs_list", "[]", type=str)
+        try:
+            entries = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        out = {}
+        for entry in entries:
+            try:
+                name, wkt = entry
+                crs = Metashape.CoordinateSystem(wkt)
+                out[name] = crs
+            except Exception:
+                continue
+        return out
+
+    def _saveUserCRSes(self):
+        '''Persist the user-added CRSes (everything in self.crs_options that
+        isn't one of the two built-ins) as a JSON list of [name, wkt]
+        pairs.'''
+        builtin_wkts = {self.defaultCRS.wkt,
+                        self.crs_options["Local Coordinates"].wkt}
+        entries = [[name, crs.wkt]
+                   for name, crs in self.crs_options.items()
+                   if crs.wkt not in builtin_wkts]
+        self.settings.setValue("user_crs_list", json.dumps(entries))
+
+    def _uniqueCRSLabel(self, base):
+        '''Return a display name that doesn't collide with an existing key in
+        self.crs_options. Used both when surfacing the chunk's current CRS
+        on dialog open and when adding a user-picked CRS — `getCoordinateSystem`
+        sometimes returns systems whose `.name` collides with one already in
+        the dropdown.'''
+        if base not in self.crs_options:
+            return base
+        suffix = 2
+        while "{} ({})".format(base, suffix) in self.crs_options:
+            suffix += 1
+        return "{} ({})".format(base, suffix)
+
+    def _onCRSChanged(self, index):
+        '''Slot: handle a change in the CRS dropdown. Three paths:
+          - User picked the "More…" sentinel: open Metashape's CRS picker.
+            If they pick one, add it to the dropdown (or reuse an existing
+            matching entry) and persist. If they cancel, revert to the
+            previously valid selection.
+          - User picked any other entry: just update the label and remember
+            the index as "last valid" for future revert.
+        '''
+        text = self.comboCRS.itemText(index)
+        if text == MORE_CRS_SENTINEL:
+            chosen = Metashape.app.getCoordinateSystem("Select Coordinate System")
+            if not chosen:
+                # Cancelled — revert. setCurrentIndex re-enters this slot
+                # with the previous index, which falls through to the label
+                # refresh below.
+                self.comboCRS.setCurrentIndex(self._lastValidCRSIndex)
+                return
+            # Did the user pick something we already have? If so, just
+            # select it instead of duplicating.
+            existing_index = next(
+                (i for i in range(self.comboCRS.count() - 1)  # exclude sentinel
+                 if self.comboCRS.itemText(i) in self.crs_options
+                 and self.crs_options[self.comboCRS.itemText(i)].wkt == chosen.wkt),
+                None,
+            )
+            if existing_index is not None:
+                self.comboCRS.setCurrentIndex(existing_index)
+                return
+            # Add as a new option just before the "More…" sentinel.
+            label = self._uniqueCRSLabel(chosen.name or "Custom CRS")
+            self.crs_options[label] = chosen
+            insert_at = self.comboCRS.count() - 1
+            self.comboCRS.insertItem(insert_at, label)
+            self.comboCRS.setCurrentIndex(insert_at)
+            self._saveUserCRSes()
+            return
+        # Plain selection change. Remember the index so a future "More…"
+        # cancel can revert here. Deliberately do *not* touch the label
+        # *text* — that shows the chunk's actual current CRS, which doesn't
+        # change until the user clicks OK. We do update the label *color*
+        # to signal whether the dropdown matches the chunk (green) or
+        # represents a pending change (red).
+        self._lastValidCRSIndex = index
+        self._refreshCRSColor()
+
+    def _applyChunkStateDefaults(self):
+        '''Collapse panels and gray inputs whose work is already done in the
+        current chunk. Per-panel rules:
+          - Project Setup: collapsed if project is saved AND chunk has photos
+          - General: collapsed if tie points + mesh + DEM + ortho all exist
+          - Georeferencing: collapsed if chunk has markers AND scalebars
+          - Export: never collapsed by default
+        Gray-out (input still visible, just disabled because changing it
+        wouldn't do anything on this re-run):
+          - Generic Preselection: tie points already exist
+          - Mesh Quality + Calculate Model Colors: mesh already exists
+        Everything stays user-toggleable — clicking the title checkbox
+        re-expands a collapsed panel, and grayed inputs would be ignored
+        downstream anyway.'''
+        if not self.chunk:
+            return
+
+        has_cameras = len(self.chunk.cameras) > 0
+        has_tie_points = self.chunk.tie_points is not None
+        has_mesh = self.chunk.model is not None
+        has_dem = self.chunk.elevation is not None
+        has_ortho = self.chunk.orthomosaic is not None
+        project_saved = bool(Metashape.app.document.path)
+        has_markers = len(self.chunk.markers) > 0
+        has_scalebars = len(self.chunk.scalebars) > 0
+
+        # Collapse rules
+        self.addphotos_groupbox.setCollapsed(project_saved and has_cameras)
+        self.general_groupbox.setCollapsed(
+            has_tie_points and has_mesh and has_dem and has_ortho
+        )
+        self.georef_groupbox.setCollapsed(has_markers and has_scalebars)
+
+        # Gray rules
+        if has_tie_points:
+            self.checkBoxPreSelect.setEnabled(False)
+            self.checkBoxPreSelect.setToolTip(
+                "Tie points already exist in this chunk; preselection only "
+                "affects the initial alignment pass.")
+        if has_mesh:
+            self.comboMeshQuality.setEnabled(False)
+            self.labelMeshQuality.setEnabled(False)
+            self.checkBoxVertexColors.setEnabled(False)
+            mesh_tip = ("A mesh already exists in this chunk; mesh quality "
+                        "and color settings only affect mesh building.")
+            self.comboMeshQuality.setToolTip(mesh_tip)
+            self.checkBoxVertexColors.setToolTip(mesh_tip)
+
+        # Shrink the dialog to the post-collapse content height. The initial
+        # geometry was sized for everything-expanded; without this call the
+        # dialog stays tall and shows whitespace under the visible panels.
+        self._fitToContent()
+
+    def _fitToContent(self):
+        '''Resize the dialog vertically to fit current content.
+
+        We only touch height — width is pinned to the form's natural width
+        via setMinimumWidth in the constructor, and we want the dialog to
+        stay that wide whether panels are open or not.
+
+        adjustSize() doesn't reliably shrink here: with a QScrollArea in
+        the layout, the dialog's own sizeHint reflects the scroll area's
+        (small) sizeHint rather than the actual content, so adjustSize
+        either no-ops or shrinks to something useless. Instead we read the
+        inner form's sizeHint directly and resize() to it. The form's
+        sizeHint correctly reflects hidden children, so collapsing a
+        panel shrinks the dialog and expanding it grows the dialog.
+        '''
+        if not hasattr(self, '_main_widget'):
+            return
+        # Force the inner layout to recompute before we ask for its sizeHint;
+        # the panel toggle we're responding to may have invalidated layouts
+        # that haven't been re-laid out yet in this event loop iteration.
+        self._main_widget.layout().activate()
+        content_h = self._main_widget.sizeHint().height() + 80
+        screen = QtWidgets.QApplication.primaryScreen()
+        screen_h = screen.availableGeometry().height() if screen else content_h
+        target_h = min(content_h, int(0.85 * screen_h))
+        self.resize(self.width(), target_h)
+
     def loadSettings(self):
         """Load saved settings using QSettings."""
         self.checkBoxPreSelect.setChecked(self.settings.value("checkBoxPreSelect", True, type=bool))
@@ -278,9 +587,24 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.checkBoxTagLab.setChecked(self.settings.value("checkBoxTagLab", False, type=bool))
         self.checkBoxReport.setChecked(self.settings.value("checkBoxExportReport", True, type=bool))
         self.checkBoxVertexColors.setChecked(self.settings.value("checkBoxVertexColors", False, type=bool))
-        crs_wkt = self.settings.value("coordinate_system", None, type=str)
-        if crs_wkt:
-            self.chunk.crs = Metashape.CoordinateSystem(crs_wkt)
+        # We deliberately do NOT reapply the saved CRS to the chunk here.
+        # The dropdown initial selection already honors the saved value as a
+        # fallback (see __init__), and the chunk's CRS only changes when the
+        # user clicks OK. Previously, loading the saved CRS into chunk.crs on
+        # every dialog open silently overwrote the chunk's actual CRS — a
+        # destructive surprise when reopening a project that used a different
+        # CRS than the user's last saved preference.
+
+        # Restore previously used scalebar file path so the user doesn't have
+        # to re-pick it every session. We only restore if the file still
+        # exists — pointing at a deleted file would mislead the user. The
+        # path is only *used* during the workflow when the Georeferencing
+        # dropdown is set to "Yes" (gated by autoDetectMarkers), so this
+        # restore is harmless when the user chooses "No".
+        saved_scalebar = self.settings.value("scalebars_path", "", type=str)
+        if saved_scalebar and path.isfile(saved_scalebar):
+            self.georef_groupbox.scalebars_path = saved_scalebar
+            self.georef_groupbox.txtScaleFile.setPlainText(saved_scalebar)
 
     def saveSettings(self):
         """Save current settings using QSettings."""
@@ -292,8 +616,18 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.settings.setValue("checkBoxTagLab", self.checkBoxTagLab.isChecked())
         self.settings.setValue("checkBoxExportReport", self.checkBoxReport.isChecked())
         self.settings.setValue("checkBoxVertexColors", self.checkBoxVertexColors.isChecked())
+        # Guard against the "More…" sentinel — it isn't a real CRS option.
+        # In normal use the dropdown reverts off the sentinel before this
+        # runs, but this defends against any race.
         selected_label = self.comboCRS.currentText()
-        self.settings.setValue("coordinate_system", self.crs_options[selected_label].wkt)
+        if selected_label in self.crs_options:
+            self.settings.setValue("coordinate_system", self.crs_options[selected_label].wkt)
+        # Persist the scalebar path so the next launch can restore it (only
+        # if a path was actually picked — don't overwrite a saved path with
+        # an empty string when the dropdown is set to "No" and no file was
+        # selected this session).
+        if getattr(self.georef_groupbox, "scalebars_path", ""):
+            self.settings.setValue("scalebars_path", self.georef_groupbox.scalebars_path)
     
     def reject(self):
         self.saveSettings()
@@ -307,15 +641,35 @@ class FullWorkflowDlg(QtWidgets.QDialog):
          
     def runWorkFlow(self):
         '''
+        OK-button slot: run the workflow body, but make sure any exception
+        re-enables the dialog so the user can adjust their inputs and try
+        again (or close the dialog). Without this wrapper, an exception
+        leaves the dialog in a setEnabled(False) state with no way to
+        recover — and on macOS in the Light/Dark theme even the title-bar
+        close button is a disabled Qt child widget, so the only recourse
+        is restarting Metashape.
+        '''
+        try:
+            self._runWorkFlowImpl()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            show_error_dialog("Workflow Error", str(e))
+            self.setEnabled(True)
+
+    def _runWorkFlowImpl(self):
+        '''
         Contains the main workflow structure
         '''
         print("Script started...")
         self.setEnabled(False)
         self.chunk = Metashape.app.document.chunk
         
+        # Skip the "More…" sentinel if somehow it's the active item (defensive
+        # — the slot reverts off it). When skipping, leave chunk.crs alone.
         selected_crs_label = self.comboCRS.currentText()
-        selected_crs = self.crs_options[selected_crs_label]
-        self.chunk.crs = selected_crs
+        if selected_crs_label in self.crs_options:
+            self.chunk.crs = self.crs_options[selected_crs_label]
         ###### 0. Setting Parameters ######
         if(not self.georef_groupbox.autoDetectMarkers and self.chunk.model == None):
             Metashape.app.messageBox("You have initiated the script without specifying georeferencing information. If you ran the align timepoints script first, "

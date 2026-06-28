@@ -21,7 +21,130 @@ from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 from PySide2.QtCore import Signal
 
-class AddPhotosGroupBox(QtWidgets.QGroupBox):
+
+class CollapsibleGroupBox(QtWidgets.QGroupBox):
+    '''
+    A QGroupBox that collapses to its title bar when the user unchecks the
+    box in the title. Use exactly like a QGroupBox — call setLayout(layout)
+    with whatever sublayouts/widgets you want inside; the only added API is
+    setCollapsed()/isCollapsed() for setting initial state from chunk
+    inspection.
+
+    Implementation: all content goes inside a single inner QWidget (`_content`)
+    rather than being parented directly to the QGroupBox. To collapse, we
+    hide just that inner widget — Qt's layout system then shrinks the box
+    to its title strip. We tried iterating direct children with findChildren
+    + setVisible first; it disables them via Qt's default checkable-groupbox
+    behavior but doesn't reliably hide them across QStyles, leaving the box
+    at full height with grayed-out content. The inner-container approach is
+    one widget to toggle and works consistently.
+
+    `setLayout` is overridden to install the layout on `_content` instead of
+    on the QGroupBox itself, so existing call sites that do
+    `self.setLayout(layout)` keep working without code changes.
+
+    Visual: a native checkable QGroupBox title strip with a checkbox — that
+    checkbox is the collapse toggle. We picked native over a custom chevron
+    header because chevron headers require platform-specific mouse-hit math
+    on the title strip and break subtly across macOS/Windows/Linux QStyles.
+
+    On Metashape's Classic theme the indicator renders as a plain checkbox
+    (reads as enable/disable), so we prefix the title with a chevron
+    (▼ expanded / ▶ collapsed) that flips with state. Light/Dark themes
+    install a large application stylesheet that already renders the
+    indicator as a chevron, so the prefix is skipped there to avoid two
+    chevrons. Detection uses QApplication.styleSheet() length — Classic
+    in testing is ~190 chars (basic palette tweaks), Light/Dark is ~26k+
+    (full custom widget styling); a 1000-char threshold sits cleanly
+    between them and doesn't depend on QStyle.objectName(), which is
+    empty for Metashape in all themes.
+
+    A tooltip on the box also explains the collapse behavior in plain
+    English regardless of which theme is active.
+    '''
+    def __init__(self, title="", parent=None):
+        # Initialize with empty title; we set the real title (with chevron
+        # prefix) via _refreshTitle below once self._title_text exists.
+        super().__init__("", parent)
+        self._title_text = title
+        self.setCheckable(True)
+        self.setChecked(True)
+        # Inner container that holds all caller-supplied content. Hiding this
+        # one widget collapses everything in one go.
+        self._content = QtWidgets.QWidget(self)
+        outer = QtWidgets.QVBoxLayout()
+        outer.setContentsMargins(8, 4, 8, 8)
+        outer.addWidget(self._content)
+        # Bypass our setLayout override so the outer layout actually
+        # installs on the QGroupBox itself (not on _content).
+        QtWidgets.QGroupBox.setLayout(self, outer)
+        self.toggled.connect(self._on_toggled)
+        self._refreshTitle()
+        self.setToolTip(
+            "Click the checkbox to collapse or expand this section. "
+            "Settings in collapsed sections are still used when you run the workflow."
+        )
+
+    def setLayout(self, layout):
+        # Redirect caller layouts onto the inner content widget so existing
+        # `self.setLayout(...)` call sites in subclasses keep working.
+        self._content.setLayout(layout)
+
+    def setTitle(self, title):
+        # Track the unprefixed title separately so we can re-render with the
+        # chevron whenever the collapse state changes. Direct callers that
+        # do `groupbox.setTitle("New")` get the prefix applied automatically.
+        self._title_text = title
+        self._refreshTitle()
+
+    def title(self):
+        return self._title_text
+
+    @staticmethod
+    def _is_themed_mode():
+        '''True when Metashape is in Light or Dark theme (which renders the
+        QGroupBox indicator as a chevron via the app stylesheet). Classic
+        mode applies a tiny stylesheet (~190 chars in testing); Light/Dark
+        apply ~26k+ chars of custom widget styling. The 1000-char
+        threshold sits cleanly between the two.'''
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            return False
+        return len(app.styleSheet()) > 1000
+
+    def _refreshTitle(self):
+        # Use the direct C++ slot to set the displayed title; calling self.
+        # setTitle here would recurse through our override. Only add the
+        # chevron prefix on themes that don't already render one (Classic).
+        if self._is_themed_mode():
+            prefix = ""
+        else:
+            prefix = "▼ " if self.isChecked() else "▶ "
+        QtWidgets.QGroupBox.setTitle(self, "{}{}".format(prefix, self._title_text))
+
+    def _on_toggled(self, checked):
+        self._content.setVisible(checked)
+        self._refreshTitle()
+
+    def setCollapsed(self, collapsed):
+        self.setChecked(not collapsed)
+
+    def isCollapsed(self):
+        return not self.isChecked()
+
+    def contentLayout(self):
+        '''The layout installed on the inner content widget — i.e. the
+        layout that holds caller-supplied widgets. Use this when you need
+        to insert into or query the content layout after construction
+        (e.g. `contentLayout().insertLayout(0, my_row)`).
+
+        `self.layout()` returns the *outer* layout that wraps the content
+        widget for collapse — inserting into it would place items outside
+        the collapsible region.'''
+        return self._content.layout()
+
+
+class AddPhotosGroupBox(CollapsibleGroupBox):
     '''
     Groupbox holding widgets used to setup a Metashape project and add photos.
 
@@ -110,6 +233,9 @@ class AddPhotosGroupBox(QtWidgets.QGroupBox):
         main_layout.addLayout(photos_dir_layout)
         main_layout.addLayout(chunk_name_layout)
         main_layout.addLayout(create_proj_layout)
+        # Absorb vertical slack at the bottom so collapsed sibling panels
+        # don't inflate gaps between this panel's rows.
+        main_layout.addStretch(1)
 
         self.setLayout(main_layout)
 
@@ -441,7 +567,7 @@ class BoundaryMarkerDlg(QtWidgets.QDialog):
 
 
 
-class GeoreferenceGroupBox(QtWidgets.QGroupBox):
+class GeoreferenceGroupBox(CollapsibleGroupBox):
     '''
     Groupbox holding widgets used for importing scaling and georeferencing information into an
     existing Metashape project, as well as specifying the formatting and arrangement of the
@@ -456,6 +582,12 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         super().__init__("Georeferencing")
         self.parent = parent
         self.autoDetectMarkers = False
+        # Initialize file paths so accessing them before the user picks a
+        # file doesn't AttributeError. Callers (e.g. the main workflow
+        # dialog) can preload these from QSettings to restore a previously
+        # used scalebar file across sessions.
+        self.scalebars_path = ""
+        self.georef_path = ""
         # set default corner marker arrangement
         self.corner_markers = [1, 2, 3, 4]
 
@@ -593,6 +725,9 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         skip_rows_layout.addWidget(self.labelSkipRows)
         skip_rows_layout.addWidget(self.spinboxSkipRows)
         ref_format_layout.addLayout(skip_rows_layout, 5, 0, 1, 2)
+        # Phantom row that absorbs any vertical slack so the spinbox rows
+        # don't get inflated when this groupbox is taller than its content.
+        ref_format_layout.setRowStretch(6, 1)
 
         self.ref_format_groupbox = QtWidgets.QGroupBox("Column Formatting")
         self.ref_format_groupbox.setLayout(ref_format_layout)
@@ -605,6 +740,11 @@ class GeoreferenceGroupBox(QtWidgets.QGroupBox):
         reference_layout.addLayout(geo_layout)
         reference_layout.addLayout(marker_pos_layout)
         reference_layout.addWidget(self.ref_format_groupbox)
+        # Absorb vertical slack at the bottom — without this, when the dialog
+        # is taller than the natural content height the gap between the
+        # "Adjust Corner Markers" button and the Column Formatting box (and
+        # all the other rows in this panel) gets inflated.
+        reference_layout.addStretch(1)
         self.setLayout(reference_layout)
 
         # ---- Connect Signals and Slots ----
