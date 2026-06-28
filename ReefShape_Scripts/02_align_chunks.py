@@ -23,7 +23,7 @@ import sys
 import csv
 import re
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
-from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, GeoreferenceGroupBox
+from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
 
 
 class AlignChunksDlg(QtWidgets.QDialog):
@@ -34,7 +34,8 @@ class AlignChunksDlg(QtWidgets.QDialog):
         # on top deadlocks Metashape's Light/Dark themes (custom QStyles install
         # application-level event filters that conflict with ApplicationModal).
         self.setWindowTitle("Align Chunks")
-        self.setMinimumWidth(500)
+        # Minimum width is set after the layout is in place so it reflects
+        # the form's actual natural width plus chrome (see end of __init__).
         # set document info
         self.doc = Metashape.app.document
         self.project_folder = path.dirname(self.doc.path)
@@ -85,8 +86,11 @@ class AlignChunksDlg(QtWidgets.QDialog):
         layout_target_type.addWidget(self.labelTargetType)
         layout_target_type.addWidget(self.comboTargetType)
         
-        #add this widget group to the top of the project setup layout
-        self.project_setup.layout().insertLayout(0, layout_target_type)
+        #add this widget group to the top of the project setup layout.
+        # Use contentLayout() (not layout()) so the row goes inside the
+        # collapsible content rather than between the title bar and the
+        # collapsible region.
+        self.project_setup.contentLayout().insertLayout(0, layout_target_type)
         # add the button to create_proj_layout - because of the way Qt passes ownership of layouts
         # around, create_proj_layout must be accessed via the main layout's itemAt() function
         # self.project_setup.layout().itemAt(4).addWidget(self.project_setup.btnCreateChunk)
@@ -119,13 +123,16 @@ class AlignChunksDlg(QtWidgets.QDialog):
         add_marker_layout.addWidget(self.comboDamagedMarkers)
         add_marker_layout.addWidget(self.btnRemoveMarker)
 
-        general_groupbox = QtWidgets.QGroupBox("General")
+        self.general_groupbox = CollapsibleGroupBox("General")
         general_layout = QtWidgets.QVBoxLayout()
         general_layout.addLayout(ref_chunk_layout)
         general_layout.addLayout(new_chunk_layout)
         general_layout.addLayout(damaged_marker_layout)
         general_layout.addLayout(add_marker_layout)
-        general_groupbox.setLayout(general_layout)
+        # Absorb vertical slack so collapsing the sibling Project Setup panel
+        # doesn't inflate gaps between this panel's rows.
+        general_layout.addStretch(1)
+        self.general_groupbox.setLayout(general_layout)
 
 
         self.btnOk = QtWidgets.QPushButton("Ok")
@@ -141,9 +148,28 @@ class AlignChunksDlg(QtWidgets.QDialog):
 
         main_layout = QtWidgets.QVBoxLayout()
         main_layout.addWidget(self.project_setup)
-        main_layout.addWidget(general_groupbox)
+        main_layout.addWidget(self.general_groupbox)
+        # Stretch between the panels and the OK/Close row so a collapsed
+        # panel just shrinks the dialog instead of inflating the gap to the
+        # buttons.
+        main_layout.addStretch(1)
         main_layout.addLayout(ok_layout)
         self.setLayout(main_layout)
+
+        # Width: pin to the form's natural width plus the platform scrollbar
+        # extent + a little chrome. Without this, macOS's window chrome
+        # accounting can leave the dialog one or two pixels too narrow and
+        # force a horizontal scrollbar.
+        sb_extent = QtWidgets.QApplication.style().pixelMetric(
+            QtWidgets.QStyle.PM_ScrollBarExtent)
+        self.setMinimumWidth(main_layout.sizeHint().width() + sb_extent + 20)
+
+        # Resize the dialog to fit content whenever a panel collapses or
+        # expands. Deferred via singleShot so the layout settles before
+        # adjustSize() reads the new sizeHint.
+        for panel in (self.project_setup, self.general_groupbox):
+            panel.toggled.connect(
+                lambda _checked: QtCore.QTimer.singleShot(0, self._fitToContent))
 
         # populate combo boxes with options
         self.updateChunkList()
@@ -162,7 +188,31 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.btnOk.clicked.connect(self.alignChunks)
         self.btnClose.clicked.connect(self.reject)
 
+    def _fitToContent(self):
+        '''Resize the dialog vertically to fit current content. Called
+        whenever a collapsible panel toggles. Width stays pinned via the
+        minimum-width set at construction.'''
+        self.layout().activate()
+        self.adjustSize()
+
     def alignChunks(self):
+        '''
+        OK-button slot: run the alignment, but make sure any exception
+        re-enables the dialog so the user can adjust their inputs and try
+        again (or close the dialog). Without this wrapper an error during
+        alignment freezes the dialog in setEnabled(False), and on macOS in
+        the Light/Dark theme even the title-bar close button is a Qt child
+        widget that becomes unclickable.
+        '''
+        try:
+            self._alignChunksImpl()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QtWidgets.QMessageBox.critical(self, "Alignment Error", str(e))
+            self.setEnabled(True)
+
+    def _alignChunksImpl(self):
         '''
         Contains main workflow
         '''
