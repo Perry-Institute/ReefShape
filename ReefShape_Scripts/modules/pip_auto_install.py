@@ -225,9 +225,10 @@ def _try_make_progress_dialog():
     layout.setSpacing(12)
 
     heading = QtWidgets.QLabel(
-        "ReefShape first-run setup\n\n"
-        "Installing Python dependencies for the ICP alignment script. "
-        "This is a one-time install and may take a few minutes."
+        "ReefShape setup\n\n"
+        "Installing Python dependencies required by one or more ReefShape "
+        "scripts. This is a one-time install per Metashape installation and "
+        "may take a few minutes."
     )
     heading.setWordWrap(True)
     layout.addWidget(heading)
@@ -300,15 +301,59 @@ def _stream_pip(cmd, dlg, QtWidgets):
     return proc.wait()
 
 
+def _confirm_install(missing):
+    """Ask the user whether to proceed with installing `missing` packages.
+
+    Returns True if the user confirmed, False if cancelled. Falls back to
+    True (auto-confirm) when no Qt event loop is running (CLI Metashape),
+    since there's no way to prompt — the install would block the script
+    either way and the user already invoked it.
+    """
+    try:
+        try:
+            from PySide6 import QtWidgets
+        except ImportError:
+            from PySide2 import QtWidgets
+    except ImportError:
+        return True
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return True
+
+    # Truncate the list shown in the dialog so it doesn't grow unbounded
+    # with transitive deps — readability matters more than completeness.
+    shown = missing if len(missing) <= 6 else missing[:6] + ["…and {} more".format(len(missing) - 6)]
+    msg = QtWidgets.QMessageBox()
+    msg.setWindowTitle("ReefShape: install dependencies?")
+    msg.setIcon(QtWidgets.QMessageBox.Question)
+    msg.setText(
+        "A ReefShape script needs Python packages that aren't installed yet.\n\n"
+        "Missing: {}\n\n"
+        "Install now? This is a one-time setup per Metashape installation. "
+        "Pip will run in the background; depending on your connection it can "
+        "take a few minutes.".format(", ".join(shown))
+    )
+    msg.setStandardButtons(QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
+    msg.setDefaultButton(QtWidgets.QMessageBox.Ok)
+    return msg.exec_() == QtWidgets.QMessageBox.Ok
+
+
 def pip_install(requirements_txt: str) -> None:
     """Ensure every package in `requirements_txt` is importable.
 
     Fast path: if every top-level name is already importable, this is a no-op
-    (no subprocess, no network). Otherwise pip is invoked with the full
-    requirements file (not just the missing ones) so transitive pins take
-    effect. While pip runs, a Qt progress dialog streams pip's output so the
-    user doesn't see Metashape "freeze" silently for several minutes — falls
-    back to console-only output if no QApplication is running.
+    (no subprocess, no network). Otherwise the user is prompted to confirm
+    the install (so they can defer on a flaky network, low battery, etc.);
+    on confirmation pip is invoked with the full requirements file (not just
+    the missing ones) so transitive pins take effect. While pip runs, a Qt
+    progress dialog streams pip's output so the user doesn't see Metashape
+    "freeze" silently for several minutes — falls back to console-only
+    output if no QApplication is running.
+
+    Raises RuntimeError if the user cancels the install — the calling
+    script will then fail at its next `import` of a missing package, which
+    surfaces in Metashape's console with a clear traceback.
     """
     target = user_packages_location()
 
@@ -324,16 +369,37 @@ def pip_install(requirements_txt: str) -> None:
     if not missing:
         return
 
+    if not _confirm_install(missing):
+        raise RuntimeError(
+            "ReefShape dependency install cancelled by user. The script "
+            "will not be able to run until its dependencies are installed; "
+            "re-launch the script (or restart Metashape) to be prompted "
+            "again."
+        )
+
     print("pip_auto_install: installing missing dependencies (first run only)")
     print("  target dir: {}".format(target))
     print("  missing:    {}".format(", ".join(missing)))
 
     req_file = Path(target).parent / "_reefshape_requirements.txt"
     req_file.write_text(requirements_txt, encoding="utf-8")
+    # Deliberately NO --upgrade. On Windows, .pyd extension files in
+    # already-installed packages (e.g. matplotlib's kiwisolver/_cext.pyd) are
+    # memory-mapped by the running Metashape process and can't be deleted
+    # until Metashape exits, so any pip operation that tries to delete-and-
+    # reinstall those files crashes with `PermissionError: [WinError 5]
+    # Access is denied`. Without --upgrade, pip simply skips requirements
+    # that are already satisfied at the target and only installs the truly
+    # missing ones — which is what we want anyway (the upstream `missing`
+    # check above already gates this whole block on something actually
+    # needing to be installed; --upgrade was forcing pip to revisit every
+    # listed package, including ones already present from a prior script's
+    # run). Tradeoff: requirement-pin bumps don't take effect on existing
+    # installs; users would need to delete the target dir to force a
+    # re-install. This is the right default for an auto-installer.
     cmd = [
         sys.executable, "-m", "pip", "install",
         "--target", target,
-        "--upgrade",
         "--disable-pip-version-check",
         "-r", str(req_file),
     ]
