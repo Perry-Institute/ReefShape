@@ -67,6 +67,12 @@ class CollapsibleGroupBox(QtWidgets.QGroupBox):
         # prefix) via _refreshTitle below once self._title_text exists.
         super().__init__("", parent)
         self._title_text = title
+        # "Complete" state — when set via setComplete(True), the title gets
+        # " | Complete" appended and is rendered green. Used to signal that
+        # a panel auto-collapsed because its work is already done in the
+        # chunk (so the user knows *why* the panel collapsed itself).
+        self._complete = False
+        self._complete_label = "Complete"
         self.setCheckable(True)
         self.setChecked(True)
         # Inner container that holds all caller-supplied content. Hiding this
@@ -120,7 +126,33 @@ class CollapsibleGroupBox(QtWidgets.QGroupBox):
             prefix = ""
         else:
             prefix = "▼ " if self.isChecked() else "▶ "
-        QtWidgets.QGroupBox.setTitle(self, "{}{}".format(prefix, self._title_text))
+        title = self._title_text
+        if self._complete:
+            title = "{} | {}".format(title, self._complete_label)
+        QtWidgets.QGroupBox.setTitle(self, "{}{}".format(prefix, title))
+
+    def setComplete(self, complete=True, label="Complete"):
+        '''Mark this section as "complete" — its work is already done in the
+        chunk. Appends " | <label>" to the title and colors the title text
+        green. Combined with setCollapsed(True), gives the user a visual
+        cue for *why* the panel auto-collapsed.
+
+        Caveat: QGroupBox renders its title as a single styled text run, so
+        the stylesheet colors the entire title (chevron + base + label),
+        not just the suffix. The whole-title color still cleanly signals
+        complete vs in-progress at a glance.'''
+        self._complete = complete
+        self._complete_label = label
+        # 0x1a7f37 ≈ GitHub's "checkmark green" — distinct from the standard
+        # palette text color in every theme.
+        self.setStyleSheet(
+            "QGroupBox::title { color: #1a7f37; font-weight: bold; }"
+            if complete else ""
+        )
+        self._refreshTitle()
+
+    def isComplete(self):
+        return self._complete
 
     def _on_toggled(self, checked):
         self._content.setVisible(checked)

@@ -500,10 +500,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
     def _applyChunkStateDefaults(self):
         '''Collapse panels and gray inputs whose work is already done in the
         current chunk. Per-panel rules:
-          - Project Setup: collapsed if project is saved AND chunk has photos
-          - General: collapsed if tie points + mesh + DEM + ortho all exist
-          - Georeferencing: collapsed if chunk has markers AND scalebars
+          - Project Setup: complete if project is saved AND chunk has photos
+          - General: complete if tie points + mesh + DEM + ortho all exist
+          - Georeferencing: complete if any marker has reference info set
+            (i.e. the chunk is georeferenced — scalebars are independent)
           - Export: never collapsed by default
+        When a panel is complete we both collapse it *and* mark it complete
+        (suffixes " | Complete" to the title and colors it green) so the
+        user knows *why* it auto-collapsed.
+
         Gray-out (input still visible, just disabled because changing it
         wouldn't do anything on this re-run):
           - Generic Preselection: tie points already exist
@@ -520,15 +525,33 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         has_dem = self.chunk.elevation is not None
         has_ortho = self.chunk.orthomosaic is not None
         project_saved = bool(Metashape.app.document.path)
-        has_markers = len(self.chunk.markers) > 0
-        has_scalebars = len(self.chunk.scalebars) > 0
+        # "Referenced" means at least one marker has a reference location
+        # set (lat/long/depth from the georef file, or set manually in the
+        # Reference panel). Scalebars are tracked separately by Metashape
+        # and aren't a prerequisite for the georef step being "done" — a
+        # chunk can be georeferenced without scalebars, especially when
+        # the user set up referencing manually.
+        try:
+            georef_done = any(
+                m.reference.location is not None
+                for m in self.chunk.markers if m.reference
+            )
+        except Exception:
+            georef_done = False
 
-        # Collapse rules
-        self.addphotos_groupbox.setCollapsed(project_saved and has_cameras)
-        self.general_groupbox.setCollapsed(
-            has_tie_points and has_mesh and has_dem and has_ortho
-        )
-        self.georef_groupbox.setCollapsed(has_markers and has_scalebars)
+        # Compute the three "complete" flags up front so each panel gets
+        # the same setComplete + setCollapsed treatment.
+        project_complete = project_saved and has_cameras
+        general_complete = has_tie_points and has_mesh and has_dem and has_ortho
+
+        self.addphotos_groupbox.setComplete(project_complete)
+        self.addphotos_groupbox.setCollapsed(project_complete)
+
+        self.general_groupbox.setComplete(general_complete)
+        self.general_groupbox.setCollapsed(general_complete)
+
+        self.georef_groupbox.setComplete(georef_done)
+        self.georef_groupbox.setCollapsed(georef_done)
 
         # Gray rules
         if has_tie_points:

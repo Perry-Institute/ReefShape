@@ -188,6 +188,25 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.btnOk.clicked.connect(self.alignChunks)
         self.btnClose.clicked.connect(self.reject)
 
+        # Apply chunk-state defaults (collapse Project Setup if photos are
+        # already in the active chunk, mark it Complete). Deferred via
+        # singleShot so the dialog has finished its initial layout pass
+        # before we ask it to recalc geometry.
+        QtCore.QTimer.singleShot(0, self._applyChunkStateDefaults)
+
+    def _applyChunkStateDefaults(self):
+        '''Collapse Project Setup when the active chunk already has photos
+        — Align Timepoints is typically run on a chunk that already has its
+        second-timepoint photos loaded, so showing the Project Setup panel
+        open by default is just visual noise. Marks it "Complete" so the
+        user knows why it auto-collapsed.'''
+        if not self.chunk:
+            return
+        has_cameras = len(self.chunk.cameras) > 0
+        self.project_setup.setComplete(has_cameras)
+        self.project_setup.setCollapsed(has_cameras)
+        self._fitToContent()
+
     def _fitToContent(self):
         '''Resize the dialog vertically to fit current content. Called
         whenever a collapsible panel toggles. Width stays pinned via the
