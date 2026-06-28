@@ -44,7 +44,7 @@ REM   Current numbering (v1.3+):
 REM     01_full_reefshape_workflow, 02_align_chunks, 03_align_chunks_ICP,
 REM     04_optimization_process, 05_scale_model, 06_create_boundary,
 REM     07_copy_boundary, 08_create_boundary_from_photos,
-REM     09_calculate_area_ratio, 10_clean_project
+REM     09_calculate_area_ratio, 10_clean_project, 11_gridded_rugosity
 REM   Pre-renumber historical names:
 REM     02a_align_chunks_ICP, 03_optimization_process, 04_scale_model,
 REM     05_create_boundary, 06_copy_boundary, 07_calculate_area_ratio,
@@ -69,6 +69,7 @@ for %%F in (
     "10_clean_project.py"
     "09_create_boundary_from_photos.py"
     "08_create_boundary_from_photos.py"
+    "11_gridded_rugosity.py"
     "ui_components.py"
 ) do (
     if exist "%TARGET%\%%~F" (

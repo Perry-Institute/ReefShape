@@ -22,7 +22,7 @@ mkdir -p "$TARGET"
 #   Current numbering (v1.3+): 01_full_reefshape_workflow, 02_align_chunks,
 #     03_align_chunks_ICP, 04_optimization_process, 05_scale_model,
 #     06_create_boundary, 07_copy_boundary, 08_create_boundary_from_photos,
-#     09_calculate_area_ratio, 10_clean_project
+#     09_calculate_area_ratio, 10_clean_project, 11_gridded_rugosity
 #   Historical: 02a_align_chunks_ICP, 03_optimization_process, 04_scale_model,
 #     05_create_boundary, 06_copy_boundary, 07_calculate_area_ratio,
 #     08_clean_project, 09_create_boundary_from_photos
@@ -56,6 +56,7 @@ REEFSHAPE_FILES=(
     "10_clean_project.py"
     "09_create_boundary_from_photos.py"
     "08_create_boundary_from_photos.py"
+    "11_gridded_rugosity.py"
     "ui_components.py"
 )
 for f in "${REEFSHAPE_FILES[@]}"; do
