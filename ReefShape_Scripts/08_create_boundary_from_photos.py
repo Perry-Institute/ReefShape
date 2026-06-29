@@ -42,19 +42,19 @@ import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 from modules.pip_auto_install import pip_install
 
-# Auto-install deps. These are a subset of (ICP + rugosity) requirements,
-# so if either of those scripts has been run this is a no-op fast-path.
-# numpy must be pinned to the same version the other ReefShape scripts use
-# (1.26.4) — see modules/pip_auto_install.py for why an unpinned numpy
-# would silently bump to 2.x and break scipy/open3d wheels.
+# Auto-install deps. numpy is pinned to the same version the other
+# ReefShape scripts use (1.26.4) — see modules/pip_auto_install.py for
+# why an unpinned numpy would silently bump to 2.x and break scipy/open3d
+# wheels. shapely is the only geometry library we need here: the coverage
+# polygon is computed as a vector buffered-union of the camera positions,
+# no rasterization in the loop.
 pip_install("""numpy==1.26.4
-scipy
-rasterio>=1.4,<2
+shapely>=2.0,<3
 """)
 
 import numpy as np
-from scipy import ndimage
-from rasterio.features import shapes as rio_shapes
+from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 
 
 # ---------------------------------------------------------------------------
@@ -120,209 +120,62 @@ def _estimate_photo_footprint(chunk):
 # Coverage polygon (raster morphology)
 # ---------------------------------------------------------------------------
 
-def _rdp_simplify_open(verts, tolerance):
-    """Ramer-Douglas-Peucker simplification on an OPEN polyline (numpy 2D array).
+def _compute_coverage_polygon(camera_xy, footprint):
+    """Compute the outer boundary of camera coverage via vector buffered union.
 
-    Recursive: find the vertex with maximum perpendicular distance from the
-    chord connecting first and last; if that distance is below `tolerance`,
-    drop every intermediate vertex; otherwise split at that vertex and recurse
-    on each half.
+    Each camera position is buffered into a circle of radius `footprint`,
+    all circles are unioned with shapely, and the exterior ring of the
+    largest component is returned. This is a pure vector pipeline — no
+    rasterization in the loop, so the result is smooth by construction
+    (the only geometric approximation is the per-circle vertex count
+    set by `quad_segs` below) and there is no resolution-dependent
+    staircase to clean up afterwards.
+
+    History: an earlier version of this function splatted camera positions
+    onto a binary raster, dilated with scipy.ndimage, polygonized with
+    rasterio.features.shapes, and then ran RDP + Chaikin to fight the
+    pixel-edge staircase artifacts. All of that was working around the
+    rasterization step, which existed only because scipy.ndimage made
+    binary dilation/union/hole-fill easy without an extra dep. Switching
+    to shapely's vector union eliminates the round-trip through raster
+    entirely; no post-processing needed.
+
+    `camera_xy` is an (N, 2) numpy array of camera positions (in any
+    units). `footprint` is the per-camera buffer radius (in the same
+    units). Returns a list of (x, y) tuples — the boundary polygon's
+    exterior, with the closing-vertex duplicate dropped.
     """
-    if len(verts) < 3:
-        return verts.copy()
-
-    start = verts[0]
-    end = verts[-1]
-    chord = end - start
-    chord_len_sq = chord[0] ** 2 + chord[1] ** 2
-
-    if chord_len_sq < 1e-24:
-        # Degenerate chord (endpoints coincide); keep just the two endpoints.
-        return np.array([start, end])
-
-    # Perpendicular distance from each vertex to the chord, computed as
-    # |(p - start) × chord| / |chord|. The 2D cross product gives a signed
-    # scalar; we take its absolute value.
-    deltas = verts - start
-    cross_z = deltas[:, 0] * chord[1] - deltas[:, 1] * chord[0]
-    perp_dist = np.abs(cross_z) / math.sqrt(chord_len_sq)
-
-    max_idx = int(np.argmax(perp_dist))
-    if perp_dist[max_idx] < tolerance:
-        # Whole run within tolerance of the chord — keep only the endpoints.
-        return np.array([start, end])
-
-    left = _rdp_simplify_open(verts[: max_idx + 1], tolerance)
-    right = _rdp_simplify_open(verts[max_idx:], tolerance)
-    # Concatenate; drop the duplicate vertex at the split point.
-    return np.concatenate([left[:-1], right])
-
-
-def _rdp_simplify(verts, tolerance):
-    """RDP simplification on a CLOSED polygon.
-
-    Collapses runs of near-collinear vertices into single edges. Critical
-    for boundaries traced from a binary raster: the polygonized pixel-edge
-    outline marches along a staircase at the raster's pixel scale, so
-    hundreds of consecutive vertices fall (almost) on the same line and
-    can be discarded without changing the polygon's shape outside
-    `tolerance`. With tolerance set to ~half a pixel, the simplified
-    polygon stays within one pixel of the original outline while losing
-    the high-frequency zigzag entirely — leaving Chaikin smoothing
-    something useful (large-scale corners) to round off rather than just
-    softening a still-jagged outline.
-
-    `verts` is an iterable of (x, y) tuples treated as a closed loop.
-    `tolerance` is in the same units as the vertex coordinates.
-    Returns a new list of (x, y) tuples.
-    """
-    if tolerance <= 0 or len(verts) < 4:
-        return list(verts)
-    pts = np.asarray(verts, dtype=np.float64)
-
-    # For a closed polygon, split at the vertex farthest from pts[0],
-    # run RDP on each resulting open polyline, then rejoin. (A naive
-    # call of RDP on the closed loop's index order would collapse the
-    # entire shape to a single segment because the chord from start to
-    # end has length 0 for a closed polygon.)
-    distances_from_0 = np.linalg.norm(pts - pts[0], axis=1)
-    split_idx = int(np.argmax(distances_from_0))
-    if split_idx == 0:
-        return [(float(pts[0, 0]), float(pts[0, 1]))]
-
-    half1 = pts[: split_idx + 1]
-    # half2 wraps around through the end and back to pts[0] so RDP treats
-    # the closing edge as part of the polyline.
-    half2 = np.concatenate([pts[split_idx:], pts[:1]])
-    simp1 = _rdp_simplify_open(half1, tolerance)
-    simp2 = _rdp_simplify_open(half2, tolerance)
-    # Drop the shared vertex between halves and the closing duplicate.
-    result = np.concatenate([simp1[:-1], simp2[:-1]])
-    return [(float(p[0]), float(p[1])) for p in result]
-
-
-def _chaikin_smooth(verts, iterations):
-    """Smooth a closed polygon via Chaikin's corner-cutting algorithm.
-
-    Each iteration replaces every edge AB with two new vertices at 1/4 and
-    3/4 along it, dropping the original corners. The result rounds off
-    sharp angles while preserving the overall shape; the polygon converges
-    to a quadratic B-spline through the original vertices as iterations
-    increase. Vertex count grows by ~2× per iteration, so 1–2 iterations
-    is the sweet spot for removing pixel-staircase artifacts from
-    rasterized polygons without exploding the vertex count.
-
-    `verts` is a list of (x, y) tuples treated as a closed loop (last
-    vertex implicitly connects back to the first). Returns a new list.
-    """
-    if iterations <= 0 or len(verts) < 3:
-        return list(verts)
-    pts = np.asarray(verts, dtype=np.float64)
-    for _ in range(iterations):
-        nxt = np.roll(pts, -1, axis=0)
-        q = 0.75 * pts + 0.25 * nxt   # 1/4 along each edge from the start
-        r = 0.25 * pts + 0.75 * nxt   # 3/4 along each edge (1/4 from end)
-        # Interleave q and r in their original edge order: q0, r0, q1, r1, …
-        pts = np.empty((2 * len(pts), 2), dtype=np.float64)
-        pts[0::2] = q
-        pts[1::2] = r
-    return [tuple(p) for p in pts]
-
-
-def _compute_coverage_polygon(camera_xy, dilation_radius, resolution,
-                              smoothing_iterations=2):
-    """Compute the outer boundary of the dilated camera-position raster.
-
-    Returns a list of (x, y) tuples in the same coords as `camera_xy` (chunk-
-    local meters). Empty list if no coverage region could be found.
-
-    `smoothing_iterations` controls Chaikin corner-cutting passes applied
-    to the raw pixel-edge polygon. 0 disables smoothing entirely (jagged
-    pixel staircase); 1 lightly rounds; 2 (default) gives visibly smooth
-    output suitable for clipping reports/ortho exports.
-    """
-    xs = camera_xy[:, 0]
-    ys = camera_xy[:, 1]
-    pad = dilation_radius * 1.5
-    xmin, xmax = float(xs.min()) - pad, float(xs.max()) + pad
-    ymin, ymax = float(ys.min()) - pad, float(ys.max()) + pad
-
-    nx = int(np.ceil((xmax - xmin) / resolution))
-    ny = int(np.ceil((ymax - ymin) / resolution))
-
-    # Splat camera positions onto raster
-    point_raster = np.zeros((ny, nx), dtype=bool)
-    cols = np.clip(((xs - xmin) / resolution).astype(int), 0, nx - 1)
-    rows = np.clip(((ys - ymin) / resolution).astype(int), 0, ny - 1)
-    point_raster[rows, cols] = True
-
-    # Dilate with a disk kernel of radius = photo footprint
-    radius_cells = max(1, int(np.ceil(dilation_radius / resolution)))
-    yy, xx = np.ogrid[-radius_cells:radius_cells + 1,
-                      -radius_cells:radius_cells + 1]
-    disk = (xx * xx + yy * yy) <= (radius_cells * radius_cells)
-    coverage = ndimage.binary_dilation(point_raster, structure=disk)
-
-    # Keep largest connected component — drops outlier cameras that happen
-    # to be far from the main cluster (e.g. badly aligned strays).
-    labeled, n_components = ndimage.label(coverage)
-    if n_components == 0:
+    if len(camera_xy) == 0 or footprint <= 0:
         return []
-    sizes = ndimage.sum(coverage, labeled, range(1, n_components + 1))
-    largest = labeled == (int(np.argmax(sizes)) + 1)
-
-    # Fill holes — user wants a single hole-free polygon
-    largest = ndimage.binary_fill_holes(largest)
-
-    # Trace the outer contour using rasterio.features.shapes (GDAL's
-    # polygonize under the hood). For each connected region of equal value
-    # in the input raster, it yields a (geometry, value) pair where
-    # geometry is a GeoJSON-like Polygon dict whose outer ring traces the
-    # pixel boundaries. We previously used matplotlib's marching-squares
-    # contour, which gave sub-pixel-interpolated contours but pulled in
-    # matplotlib + kiwisolver + pyparsing + cycler + contourpy + fonttools
-    # + pillow as deps. The pixel-edge polygon from rasterio is slightly
-    # blockier but indistinguishable in practice for a boundary that
-    # already starts from a dilation of the camera positions — and 11
-    # already needs rasterio.
-    #
-    # `connectivity=8` matches the diagonal-neighbour connectivity that
-    # binary_fill_holes used above; without this, near-diagonal pixel
-    # arrangements could break a connected region into multiple polygons.
-    # The mask must be int (uint8 is enough) — rasterio.features.shapes
-    # doesn't accept bool directly.
-    longest_verts = None
-    longest_len = 0
-    for geom, val in rio_shapes(largest.astype(np.uint8), connectivity=8):
-        if val != 1:
-            continue  # background polygon
-        outer_ring = geom["coordinates"][0]  # outer ring; ignore holes
-        if len(outer_ring) > longest_len:
-            longest_len = len(outer_ring)
-            longest_verts = outer_ring
-
-    if longest_verts is None:
+    # quad_segs is the number of vertices per quadrant of each circle —
+    # 16 gives 64 vertices per buffered point, smooth at any zoom level
+    # that makes geometric sense for a reef plot. Higher values are
+    # progressively wasted; lower values would bring back visible
+    # polygonal facets.
+    circles = [Point(float(x), float(y)).buffer(footprint, quad_segs=16)
+               for x, y in camera_xy]
+    union = unary_union(circles)
+    if union.is_empty:
         return []
-
-    # Pixel (col, row) → chunk-local (x, y). rasterio's shapes returns
-    # coordinates in pixel space when no transform is supplied.
-    verts_chunk = [(xmin + float(col) * resolution,
-                    ymin + float(row) * resolution)
-                   for col, row in longest_verts]
-
-    # Two-stage smoothing:
-    #   (1) RDP collapses the pixel-edge staircase into straight segments.
-    #       Tolerance = half a pixel ensures the simplified polygon stays
-    #       within one pixel of the original outline. Without this step,
-    #       Chaikin alone just softens individual zigzag corners without
-    #       eliminating the high-frequency noise, leaving the boundary
-    #       visibly jagged even at moderate plot zoom.
-    #   (2) Chaikin rounds the remaining (now-meaningful) corners between
-    #       straight segments. With RDP first, far fewer vertices feed in,
-    #       so the corner-cutting actually produces a smooth-looking curve
-    #       rather than just dampening the staircase amplitude.
-    verts_chunk = _rdp_simplify(verts_chunk, tolerance=resolution * 0.5)
-    return _chaikin_smooth(verts_chunk, smoothing_iterations)
+    # Multi-polygon means cameras formed disjoint clusters; keep the
+    # largest by area (drops outlier cameras far from the main cluster).
+    if union.geom_type == "MultiPolygon":
+        union = max(union.geoms, key=lambda p: p.area)
+    # Reconstruct from just the exterior ring to drop any interior holes
+    # (e.g. small uncovered patches between cameras) — users want a single
+    # hole-free boundary for clipping outputs.
+    outer = Polygon(union.exterior)
+    # Light Douglas-Peucker simplification trims co-linear vertices that
+    # shapely's union sometimes leaves along straight stretches where many
+    # circles butt up tangentially. Tolerance is a tiny fraction of the
+    # footprint — visually indistinguishable, but cuts vertex count.
+    outer = outer.simplify(footprint * 0.01)
+    coords = list(outer.exterior.coords)
+    # shapely's exterior.coords closes the ring with a duplicate of the
+    # first vertex; drop it so downstream code doesn't have to special-case.
+    if coords and coords[0] == coords[-1]:
+        coords = coords[:-1]
+    return [(float(x), float(y)) for x, y in coords]
 
 
 # ---------------------------------------------------------------------------
@@ -403,15 +256,10 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
             "cameras above the tie-point cloud and the camera FOV. Increase "
             "to make the boundary wider, decrease to make it tighter.")
 
-        self.lblSmoothing = QtWidgets.QLabel("Smoothing passes:")
-        self.spinSmoothing = QtWidgets.QSpinBox()
-        self.spinSmoothing.setRange(0, 5)
-        self.spinSmoothing.setValue(2)
-        self.spinSmoothing.setToolTip(
-            "Chaikin corner-cutting passes applied to the boundary polygon. "
-            "0 = raw pixel staircase (no smoothing); 1 = light rounding; "
-            "2 (default) = visibly smooth; higher values keep rounding but "
-            "double the vertex count each pass.")
+        # No "smoothing" spinbox anymore — the shapely vector union
+        # produces a naturally smooth polygon (circle approximations) so
+        # there's nothing to smooth. The only relevant parameter is the
+        # footprint radius itself.
 
         self.btnOk = QtWidgets.QPushButton("Create Boundary")
         self.btnCancel = QtWidgets.QPushButton("Cancel")
@@ -422,13 +270,11 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         grid.addWidget(info, 0, 0, 1, 2)
         grid.addWidget(self.lblFootprint, 1, 0)
         grid.addWidget(self.spinFootprint, 1, 1)
-        grid.addWidget(self.lblSmoothing, 2, 0)
-        grid.addWidget(self.spinSmoothing, 2, 1)
         btns = QtWidgets.QHBoxLayout()
         btns.addStretch(1)
         btns.addWidget(self.btnCancel)
         btns.addWidget(self.btnOk)
-        grid.addLayout(btns, 3, 0, 1, 2)
+        grid.addLayout(btns, 2, 0, 1, 2)
         self.setLayout(grid)
 
         self.btnOk.clicked.connect(self._on_create)
@@ -492,24 +338,17 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         scale_avg = 0.5 * (abs(scale_x) + abs(scale_y))
 
         footprint = float(self.spinFootprint.value())
-        smoothing = int(self.spinSmoothing.value())
-        dilation_m = footprint
-
-        # Convert all distances from meters → shape-CRS units for the raster
-        # math, then convert back implicitly (we just keep the boundary in
-        # shape-CRS coords throughout).
-        dilation_crs = dilation_m * scale_avg
-        resolution_m = max(0.02, min(0.10, dilation_m / 10.0))
-        resolution_crs = resolution_m * scale_avg
+        # Convert footprint from meters → shape-CRS units. The boundary
+        # polygon stays in shape-CRS coords throughout (no round-trip
+        # through meters); shapely operates on whatever units it's given.
+        footprint_crs = footprint * scale_avg
 
         print("Photo coverage boundary: footprint={:.2f} m, "
-              "smoothing={} passes, raster={:.3f} m/cell, scale={:.3e} CRS/m"
-              .format(footprint, smoothing, resolution_m, scale_avg))
+              "scale={:.3e} CRS/m".format(footprint, scale_avg))
 
         try:
             boundary_xy_crs = _compute_coverage_polygon(
-                positions_crs[:, :2], dilation_crs, resolution_crs,
-                smoothing_iterations=smoothing)
+                positions_crs[:, :2], footprint_crs)
         except Exception as exc:
             Metashape.app.messageBox(
                 "Failed to compute coverage polygon: {}".format(exc))
