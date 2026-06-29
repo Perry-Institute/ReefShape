@@ -42,18 +42,19 @@ import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 from modules.pip_auto_install import pip_install
 
-# Auto-install deps. These are a subset of the ICP script's requirements, so
-# if the ICP script has been run this is a no-op fast-path.
-pip_install("""numpy
+# Auto-install deps. These are a subset of (ICP + rugosity) requirements,
+# so if either of those scripts has been run this is a no-op fast-path.
+# numpy must be pinned to the same version the other ReefShape scripts use
+# (1.26.4) — see modules/pip_auto_install.py for why an unpinned numpy
+# would silently bump to 2.x and break scipy/open3d wheels.
+pip_install("""numpy==1.26.4
 scipy
-matplotlib
+rasterio>=1.4,<2
 """)
 
 import numpy as np
 from scipy import ndimage
-import matplotlib
-matplotlib.use("Agg")  # no GUI backend needed; we use contour purely for math
-import matplotlib.pyplot as plt
+from rasterio.features import shapes as rio_shapes
 
 
 # ---------------------------------------------------------------------------
@@ -158,28 +159,38 @@ def _compute_coverage_polygon(camera_xy, dilation_radius, resolution):
     # Fill holes — user wants a single hole-free polygon
     largest = ndimage.binary_fill_holes(largest)
 
-    # Trace the outer contour using matplotlib's marching-squares.
-    # We pass a single contour level, so `cs.allsegs[0]` is the list of
-    # (N, 2) vertex arrays for that level — one entry per closed loop. We
-    # keep whichever loop has the most vertices (the outer perimeter, since
-    # holes were filled above). `allsegs` is preferred over the older
-    # `cs.collections` API, which was deprecated in Matplotlib 3.8.
-    fig, ax = plt.subplots()
-    try:
-        cs = ax.contour(largest.astype(float), levels=[0.5])
-        longest_verts = None
-        longest_len = 0
-        for seg in cs.allsegs[0]:
-            if len(seg) > longest_len:
-                longest_len = len(seg)
-                longest_verts = seg
-    finally:
-        plt.close(fig)
+    # Trace the outer contour using rasterio.features.shapes (GDAL's
+    # polygonize under the hood). For each connected region of equal value
+    # in the input raster, it yields a (geometry, value) pair where
+    # geometry is a GeoJSON-like Polygon dict whose outer ring traces the
+    # pixel boundaries. We previously used matplotlib's marching-squares
+    # contour, which gave sub-pixel-interpolated contours but pulled in
+    # matplotlib + kiwisolver + pyparsing + cycler + contourpy + fonttools
+    # + pillow as deps. The pixel-edge polygon from rasterio is slightly
+    # blockier but indistinguishable in practice for a boundary that
+    # already starts from a dilated buffer of camera positions — and 11
+    # already needs rasterio.
+    #
+    # `connectivity=8` matches the diagonal-neighbour connectivity that
+    # binary_fill_holes used above; without this, near-diagonal pixel
+    # arrangements could break a connected region into multiple polygons.
+    # The mask must be int (uint8 is enough) — rasterio.features.shapes
+    # doesn't accept bool directly.
+    longest_verts = None
+    longest_len = 0
+    for geom, val in rio_shapes(largest.astype(np.uint8), connectivity=8):
+        if val != 1:
+            continue  # background polygon
+        outer_ring = geom["coordinates"][0]  # outer ring; ignore holes
+        if len(outer_ring) > longest_len:
+            longest_len = len(outer_ring)
+            longest_verts = outer_ring
 
     if longest_verts is None:
         return []
 
-    # Pixel (col, row) → chunk-local (x, y)
+    # Pixel (col, row) → chunk-local (x, y). rasterio's shapes returns
+    # coordinates in pixel space when no transform is supplied.
     return [(xmin + float(col) * resolution,
              ymin + float(row) * resolution)
             for col, row in longest_verts]
