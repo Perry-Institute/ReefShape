@@ -3,8 +3,9 @@ Gridded Rugosity
 Will Greene, Perry Institute for Marine Science
 
 Computes per-cell 3D-to-2D surface area ratio (rugosity) on a 1-meter grid
-within the active chunk's OuterBoundary polygon, and writes the result as a
-GeoTIFF in the chunk's shape CRS.
+within the active chunk's OuterBoundary polygon, and imports the result back
+into the chunk as a labeled DEM ("Rugosity"). Optionally also writes it to
+disk as a GeoTIFF.
 
 Why a single-pass mesh iteration (vs. clip-per-cell):
   09_calculate_area_ratio.py duplicates and clips the mesh to compute the
@@ -34,31 +35,46 @@ Requires:
   - The active chunk has a 3D model.
   - The active chunk has an OuterBoundary polygon shape.
 
-Output: <project>_<chunk>_rugosity_1m.tif at user-selected folder. Float32
-pixel values; nodata for cells outside the boundary or with zero mesh.
+Dependencies: numpy, rasterio. Installed via pip_auto_install on first run.
 """
 
 import math
 import os
+import tempfile
 
 import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 
 from modules.pip_auto_install import pip_install
 
-pip_install("""numpy
-matplotlib
-rasterio
+# Deliberately NO matplotlib. An earlier version used matplotlib.path.Path
+# for point-in-polygon, but on some installs `from matplotlib.path import
+# Path` raised `module 'matplotlib' has no attribute 'rcParams'` — matplotlib
+# has heavy import-time machinery and is fragile when its install was last
+# touched by an unrelated pip run mid-session. rasterio.features.rasterize
+# does the polygon mask in one call with no extra dependency.
+#
+# numpy must be pinned to the SAME version as 03_align_chunks_ICP.py and
+# 08_create_boundary_from_photos.py (numpy==1.26.4). Without a pin, pip
+# resolves to the latest numpy (currently 2.5.x), which breaks the scipy
+# and open3d wheels — those were compiled against numpy 1.x and refuse to
+# load under numpy 2.x. A single unpinned `numpy` here would silently
+# poison the install for every other ReefShape script that needs numpy.
+# Rasterio is pinned loosely to the 1.4.x line so we get Python 3.12
+# wheels but stay below any future breaking 2.0 release.
+pip_install("""numpy==1.26.4
+rasterio>=1.4,<2
 """)
 
 import numpy as np  # noqa: E402
 import rasterio  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
-from matplotlib.path import Path as MplPath  # noqa: E402
+from rasterio.features import rasterize as rio_rasterize  # noqa: E402
 
 
 CELL_SIZE_M = 1.0  # 1-meter grid cells
 NODATA = -9999.0
+RASTER_LABEL = "Rugosity"  # what the imported DEM is labeled in the chunk
 
 
 def _show_error(parent, title, msg):
@@ -70,6 +86,68 @@ def _show_error(parent, title, msg):
     box.exec_()
 
 
+# ---------------------------------------------------------------------------
+# Progress dialog
+# ---------------------------------------------------------------------------
+
+class _ProgressDialog(QtWidgets.QDialog):
+    """Plain QDialog with a status label and determinate progress bar.
+
+    Built by hand (not QProgressDialog) for the same reason pip_auto_install
+    rolls its own: QProgressDialog auto-sizes on every setLabelText, which
+    fights with setFixedSize when status text varies in width.
+    """
+
+    def __init__(self, parent, title):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowModality(QtCore.Qt.WindowModal)
+        self.setFixedSize(480, 160)
+        # Strip the close button so users can't dismiss mid-compute (the
+        # script holds the GIL inside numpy calls anyway, so dismissing
+        # wouldn't actually stop work).
+        flags = self.windowFlags() & ~QtCore.Qt.WindowCloseButtonHint
+        flags &= ~QtCore.Qt.WindowSystemMenuHint
+        self.setWindowFlags(flags)
+
+        self._heading = QtWidgets.QLabel("Computing gridded rugosity…")
+        self._heading.setWordWrap(True)
+        font = self._heading.font()
+        font.setBold(True)
+        self._heading.setFont(font)
+
+        self._status = QtWidgets.QLabel("")
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet("color: palette(mid);")
+        self._status.setMaximumWidth(440)
+
+        self._bar = QtWidgets.QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+        layout.addWidget(self._heading)
+        layout.addWidget(self._status)
+        layout.addStretch(1)
+        layout.addWidget(self._bar)
+
+    def set_status(self, text):
+        self._status.setText(text)
+        QtWidgets.QApplication.processEvents()
+
+    def set_progress(self, fraction):
+        # Clamp to [0,1] before scaling to the 0..100 widget range.
+        f = max(0.0, min(1.0, fraction))
+        self._bar.setValue(int(f * 100))
+        QtWidgets.QApplication.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _extract_boundary_ring(geom):
     """Return the outer ring of a polygon geometry as a list of Metashape
     Vectors. Handles both nested-ring (list-of-list-of-Vector) and flat
@@ -80,27 +158,84 @@ def _extract_boundary_ring(geom):
     if not coords:
         raise RuntimeError("Boundary polygon has no coordinates.")
     first = coords[0]
-    # Nested form: coords is a list of rings; outer ring is coords[0]
     if isinstance(first, (list, tuple)) and first and hasattr(first[0], "x"):
         return list(first)
-    # Flat form: coords is the outer ring directly
     if hasattr(first, "x"):
         return list(coords)
     raise RuntimeError("Could not interpret boundary polygon coordinate format.")
 
 
-def compute_gridded_rugosity(chunk, boundary, cell_size_m):
-    """Core computation. Returns (rugosity_float32, geotransform, crs_wkt, stats).
+def _import_raster_to_chunk(chunk, path, label):
+    """Import `path` as an Elevation product in `chunk` and label it.
+
+    Records the existing elevations' keys, calls importRaster, then finds
+    the freshly-added one and renames it. Doesn't touch the chunk's
+    currently-active elevation (chunk.elevation) so the rugosity raster
+    coexists with the original DEM rather than replacing it.
+
+    Returns the imported Elevation object, or None if it couldn't be
+    located after import (which would be surprising — importRaster
+    succeeded but the chunk didn't gain an entry).
+    """
+    before_keys = set()
+    if chunk.elevations:
+        before_keys = {e.key for e in chunk.elevations}
+
+    # Preserve the currently-active elevation so importRaster doesn't bump
+    # us off the project's real DEM.
+    prior_active = chunk.elevation
+
+    chunk.importRaster(
+        path=path,
+        crs=chunk.crs,
+        raster_type=Metashape.DataSource.ElevationData,
+    )
+
+    new_elev = None
+    if chunk.elevations:
+        for e in chunk.elevations:
+            if e.key not in before_keys:
+                new_elev = e
+                break
+
+    if new_elev is not None:
+        new_elev.label = label
+
+    # Restore the original active DEM (importRaster makes the import active).
+    if prior_active is not None and chunk.elevation is not prior_active:
+        chunk.elevation = prior_active
+
+    return new_elev
+
+
+# ---------------------------------------------------------------------------
+# Core computation
+# ---------------------------------------------------------------------------
+
+def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
+    """Returns (rugosity_float32, geotransform, crs_wkt, stats).
 
     rugosity_float32 is a (n_rows, n_cols) array with NODATA outside the
     boundary mask or where the cell has zero mesh coverage.
+
+    `progress` is an optional object with `set_status(str)` and
+    `set_progress(float in [0,1])` methods; if provided, it's updated
+    between phases and inside the long Python loops so the dialog stays
+    responsive.
     """
+
+    def _step(text, fraction):
+        if progress is not None:
+            progress.set_status(text)
+            progress.set_progress(fraction)
+
     T = chunk.transform.matrix
     shape_crs = chunk.shapes.crs if (chunk.shapes and chunk.shapes.crs) else chunk.crs
     if shape_crs is None:
         raise RuntimeError("Chunk has no CRS set on shapes or on the chunk itself.")
 
     # --- 1. Boundary outer ring in shape CRS (XY) ---
+    _step("Reading boundary polygon…", 0.02)
     ring = _extract_boundary_ring(boundary.geometry)
     boundary_xy = np.array([(v.x, v.y) for v in ring], dtype=np.float64)
     if len(boundary_xy) < 3:
@@ -113,21 +248,39 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
         raise RuntimeError("Chunk model has no faces.")
     print("  mesh: {} vertices, {} faces".format(n_verts, n_faces))
 
+    _step("Extracting {:,} mesh vertices…".format(n_verts), 0.05)
     vert_coords = np.empty((n_verts, 3), dtype=np.float64)
-    for i, v in enumerate(chunk.model.vertices):
-        c = v.coord
-        vert_coords[i, 0] = c.x
-        vert_coords[i, 1] = c.y
-        vert_coords[i, 2] = c.z
+    verts = chunk.model.vertices
+    # Batch with periodic event-pump so the dialog updates and stays
+    # responsive. The per-vertex coord access is Python overhead, ~1µs/vert,
+    # so a 5M-face mesh is several seconds.
+    batch = max(1, n_verts // 50)
+    for start in range(0, n_verts, batch):
+        end = min(start + batch, n_verts)
+        for i in range(start, end):
+            c = verts[i].coord
+            vert_coords[i, 0] = c.x
+            vert_coords[i, 1] = c.y
+            vert_coords[i, 2] = c.z
+        if progress is not None:
+            progress.set_progress(0.05 + 0.25 * (end / n_verts))
 
+    _step("Extracting {:,} mesh faces…".format(n_faces), 0.30)
     face_verts = np.empty((n_faces, 3), dtype=np.int64)
-    for i, f in enumerate(chunk.model.faces):
-        fv = f.vertices
-        face_verts[i, 0] = fv[0]
-        face_verts[i, 1] = fv[1]
-        face_verts[i, 2] = fv[2]
+    faces = chunk.model.faces
+    batch = max(1, n_faces // 50)
+    for start in range(0, n_faces, batch):
+        end = min(start + batch, n_faces)
+        for i in range(start, end):
+            fv = faces[i].vertices
+            face_verts[i, 0] = fv[0]
+            face_verts[i, 1] = fv[1]
+            face_verts[i, 2] = fv[2]
+        if progress is not None:
+            progress.set_progress(0.30 + 0.20 * (end / n_faces))
 
     # --- 3. Triangle 3D areas + centroids, vectorized in chunk-local meters ---
+    _step("Computing triangle areas…", 0.55)
     tri = vert_coords[face_verts]  # (n_faces, 3, 3)
     v0, v1, v2 = tri[:, 0], tri[:, 1], tri[:, 2]
     e1 = v1 - v0
@@ -142,6 +295,7 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
     # accurate to well under a millimeter. Seeded random sample → identical
     # affine across runs/timepoints with identical mesh, so cell assignment
     # is reproducible.
+    _step("Calibrating chunk → shape-CRS projection…", 0.65)
     rng = np.random.RandomState(42)
     n_calib = min(50, n_verts)
     calib_idx = rng.choice(n_verts, n_calib, replace=False)
@@ -170,6 +324,7 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
     print("  cell size: {:.6g} shape-CRS units ({} m)".format(cell_size_units, cell_size_m))
 
     # --- 5. Build grid: bbox of boundary, snapped to cell_size multiples ---
+    _step("Building grid…", 0.75)
     bx_min, by_min = boundary_xy.min(axis=0)
     bx_max, by_max = boundary_xy.max(axis=0)
     left_x = math.floor(bx_min / cell_size_units) * cell_size_units
@@ -181,17 +336,29 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
     print("  grid: {} cols x {} rows ({} cells total)".format(
         n_cols, n_rows, n_cols * n_rows))
 
-    # --- 6. Boundary mask via point-in-polygon on cell centers ---
-    col_idx = np.arange(n_cols)
-    row_idx = np.arange(n_rows)
-    cell_cx = left_x + (col_idx + 0.5) * cell_size_units            # (n_cols,)
-    cell_cy = top_y - (row_idx + 0.5) * cell_size_units             # (n_rows,)
-    gx, gy = np.meshgrid(cell_cx, cell_cy)
-    cell_points = np.column_stack([gx.ravel(), gy.ravel()])
-    poly_path = MplPath(boundary_xy)
-    inside = poly_path.contains_points(cell_points).reshape(n_rows, n_cols)
+    transform = from_origin(left_x, top_y, cell_size_units, cell_size_units)
+
+    # --- 6. Boundary mask via rasterio.features.rasterize ---
+    # Pass the polygon as a GeoJSON-like dict; rasterize handles the
+    # in/out determination using GDAL's polygon rasterizer (no shapely
+    # dependency needed). all_touched=False matches our centroid-based
+    # face assignment (cells whose center is inside the polygon).
+    _step("Building boundary mask…", 0.80)
+    poly_geo = {
+        "type": "Polygon",
+        "coordinates": [boundary_xy.tolist()],
+    }
+    inside_mask = rio_rasterize(
+        [(poly_geo, 1)],
+        out_shape=(n_rows, n_cols),
+        transform=transform,
+        fill=0,
+        dtype=np.uint8,
+        all_touched=False,
+    ).astype(bool)
 
     # --- 7. Assign each face's 3D area to its centroid's cell ---
+    _step("Assigning {:,} faces to cells…".format(n_faces), 0.85)
     cols = np.floor((centroids_shape[:, 0] - left_x) / cell_size_units).astype(np.int64)
     rows = np.floor((top_y - centroids_shape[:, 1]) / cell_size_units).astype(np.int64)
     valid = (cols >= 0) & (cols < n_cols) & (rows >= 0) & (rows < n_rows)
@@ -201,19 +368,17 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
     np.add.at(accumulator, (rows[valid], cols[valid]), areas_3d[valid])
 
     # --- 8. Rugosity = accumulated 3D area / cell footprint (m²) ---
+    _step("Computing rugosity…", 0.95)
     cell_footprint_m2 = cell_size_m * cell_size_m
     rugosity = accumulator / cell_footprint_m2
 
-    # Cells outside the boundary mask: nodata.
-    # Cells inside but with no face centroids: also nodata (likely the cell
-    # straddles the boundary edge and most face centroids fell outside).
     rugosity_out = rugosity.astype(np.float32)
-    rugosity_out[~inside] = NODATA
-    no_coverage = inside & (accumulator == 0)
+    rugosity_out[~inside_mask] = NODATA
+    no_coverage = inside_mask & (accumulator == 0)
     rugosity_out[no_coverage] = NODATA
 
     # --- 9. Stats summary ---
-    valid_mask = inside & (accumulator > 0)
+    valid_mask = inside_mask & (accumulator > 0)
     n_valid = int(valid_mask.sum())
     if n_valid > 0:
         vals = rugosity[valid_mask]
@@ -223,17 +388,13 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m):
             "median": float(np.median(vals)),
             "min": float(np.min(vals)),
             "max": float(np.max(vals)),
-            # Global rugosity matches what 09_calculate_area_ratio reports
-            # (sum of all in-mask 3D area / total in-mask footprint area).
             "global": float(accumulator[valid_mask].sum() / (n_valid * cell_footprint_m2)),
         }
     else:
         stats = {"n_cells": 0, "mean": 0, "median": 0,
                  "min": 0, "max": 0, "global": 0}
 
-    # --- 10. Build GeoTIFF affine (origin = top-left, north-up) ---
-    transform = from_origin(left_x, top_y, cell_size_units, cell_size_units)
-
+    _step("Done.", 1.0)
     return rugosity_out, transform, shape_crs.wkt, stats
 
 
@@ -255,6 +416,10 @@ def write_geotiff(path, data, transform, crs_wkt):
         dst.write(data, 1)
 
 
+# ---------------------------------------------------------------------------
+# Dialog
+# ---------------------------------------------------------------------------
+
 class GriddedRugosityDlg(QtWidgets.QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -270,8 +435,8 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         intro = QtWidgets.QLabel(
             "Computes per-cell rugosity (3D / 2D surface area ratio) on a "
             "1-meter grid within the active chunk's OuterBoundary polygon. "
-            "Output is a GeoTIFF at 1 m resolution in the chunk's shape CRS, "
-            "with one float pixel value per cell.\n\n"
+            "The result is imported back into the chunk as a labeled DEM "
+            '("Rugosity"), alongside (not replacing) the project\'s real DEM.\n\n'
             "Captures overhangs correctly via single-pass mesh iteration — "
             "no per-cell mesh clipping, so it's fast even on large meshes.\n\n"
             "Requires a 3D model and an OuterBoundary polygon in the active "
@@ -279,12 +444,18 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         )
         intro.setWordWrap(True)
 
+        self.checkSaveDisk = QtWidgets.QCheckBox(
+            "Also save raster to disk (GeoTIFF)")
+        self.checkSaveDisk.setChecked(False)
+        self.checkSaveDisk.toggled.connect(self._onSaveDiskToggled)
+
         self.labelOutDir = QtWidgets.QLabel("Output Folder:")
         self.txtOutDir = QtWidgets.QPlainTextEdit(self.output_dir or "(no folder selected)")
         self.txtOutDir.setFixedHeight(40)
         self.txtOutDir.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtOutDir.setReadOnly(True)
         self.btnOutDir = QtWidgets.QPushButton("Select Folder")
+        self.btnOutDir.clicked.connect(self.pickOutDir)
 
         self.btnOk = QtWidgets.QPushButton("Compute")
         self.btnOk.setFixedSize(100, 40)
@@ -304,6 +475,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
         main_layout = QtWidgets.QVBoxLayout()
         main_layout.addWidget(intro)
+        main_layout.addWidget(self.checkSaveDisk)
         main_layout.addLayout(dir_layout)
         main_layout.addStretch(1)
         main_layout.addLayout(btn_layout)
@@ -313,10 +485,17 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
             QtWidgets.QStyle.PM_ScrollBarExtent)
         self.setMinimumWidth(main_layout.sizeHint().width() + sb_extent + 20)
 
+        # Folder picker is disabled until the user opts into disk export.
+        self._onSaveDiskToggled(self.checkSaveDisk.isChecked())
+
         # --- Signals ---
-        self.btnOutDir.clicked.connect(self.pickOutDir)
         self.btnOk.clicked.connect(self.run)
         self.btnClose.clicked.connect(self.reject)
+
+    def _onSaveDiskToggled(self, checked):
+        self.labelOutDir.setEnabled(checked)
+        self.txtOutDir.setEnabled(checked)
+        self.btnOutDir.setEnabled(checked)
 
     def pickOutDir(self):
         start = self.output_dir or self.project_folder or ""
@@ -328,9 +507,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
     def run(self):
         # Wrapper that always re-enables the dialog on error so the user can
-        # adjust and retry without restarting Metashape (same pattern as
-        # 01/02 — Light/Dark theme disables the title-bar X too when the
-        # whole dialog is disabled).
+        # adjust and retry without restarting Metashape.
         try:
             self._runImpl()
         except Exception as e:
@@ -359,28 +536,62 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
             raise RuntimeError(
                 "No OuterBoundary polygon found in chunk shapes. Create one "
                 "(see scripts 06 or 08) before running this script.")
-        if not self.output_dir or not os.path.isdir(self.output_dir):
-            raise RuntimeError("Please select a valid output folder.")
 
-        # Build a filename matching the rest of ReefShape's exports.
+        save_to_disk = self.checkSaveDisk.isChecked()
+        if save_to_disk and (not self.output_dir or not os.path.isdir(self.output_dir)):
+            raise RuntimeError(
+                "Disk export is checked but no valid output folder is "
+                "selected. Either uncheck \"Also save raster to disk\" or "
+                "pick a folder.")
+
+        # Build a target filename (used both for disk export and as the
+        # importRaster source name; Metashape sometimes uses the filename
+        # for the chunk-product label until we rename it).
         project_name = os.path.basename(self.doc.path or "untitled")
         for ext in (".psx", ".psz", ".files"):
             if project_name.lower().endswith(ext):
                 project_name = project_name[:-len(ext)]
                 break
         chunk_label = self.chunk.label or "chunk"
-        output_path = os.path.join(
-            self.output_dir,
-            "{}_{}_rugosity_1m.tif".format(project_name, chunk_label),
-        )
+        out_basename = "{}_{}_rugosity_1m.tif".format(project_name, chunk_label)
 
         self.setEnabled(False)
+        progress = _ProgressDialog(self, "Gridded Rugosity")
+        progress.show()
+        QtWidgets.QApplication.processEvents()
+
+        temp_dir = tempfile.mkdtemp(prefix="reefshape_rugosity_")
+        temp_path = os.path.join(temp_dir, out_basename)
         try:
             print("Gridded Rugosity:")
-            print("  output: {}".format(output_path))
+            print("  temp file: {}".format(temp_path))
+
             data, transform, crs_wkt, stats = compute_gridded_rugosity(
-                self.chunk, boundary, CELL_SIZE_M)
-            write_geotiff(output_path, data, transform, crs_wkt)
+                self.chunk, boundary, CELL_SIZE_M, progress=progress)
+
+            progress.set_status("Writing GeoTIFF…")
+            progress.set_progress(0.95)
+            write_geotiff(temp_path, data, transform, crs_wkt)
+
+            progress.set_status("Importing into chunk as DEM…")
+            progress.set_progress(0.98)
+            new_elev = _import_raster_to_chunk(self.chunk, temp_path, RASTER_LABEL)
+            if new_elev is None:
+                print("  WARNING: importRaster succeeded but no new elevation "
+                      "entry was found in the chunk. Skipping rename.")
+
+            disk_path = None
+            if save_to_disk:
+                # Copy the temp file to the user's chosen folder. We could
+                # write it directly there too, but routing through temp
+                # keeps the import step uniform regardless of save choice.
+                import shutil
+                disk_path = os.path.join(self.output_dir, out_basename)
+                shutil.copy2(temp_path, disk_path)
+                print("  saved to: {}".format(disk_path))
+
+            progress.set_status("Done.")
+            progress.set_progress(1.0)
 
             print("  done.")
             print("  cells with data: {}".format(stats["n_cells"]))
@@ -390,26 +601,38 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                                            stats["min"], stats["max"]))
                 print("  global rugosity: {:.3f}".format(stats["global"]))
 
-            QtWidgets.QMessageBox.information(
-                self,
-                "Gridded Rugosity",
-                "Wrote rugosity raster.\n\nFile: {path}\n\n"
+            summary = (
+                "Imported as DEM \"{}\" in the active chunk.\n\n"
                 "Cells with data: {n}\nMean: {mean:.3f}\n"
                 "Median: {median:.3f}\nMax: {max:.3f}\n\n"
                 "Global rugosity (sum of 3D area / total cell footprint): "
-                "{glob:.3f}\n(This matches what \"Calculate Surface Area "
-                "Ratio\" reports for the whole plot.)".format(
-                    path=output_path,
-                    n=stats["n_cells"],
-                    mean=stats["mean"],
-                    median=stats["median"],
-                    max=stats["max"],
+                "{glob:.3f}\n(Matches what \"Calculate Surface Area Ratio\" "
+                "reports for the whole plot.)".format(
+                    RASTER_LABEL,
+                    n=stats["n_cells"], mean=stats["mean"],
+                    median=stats["median"], max=stats["max"],
                     glob=stats["global"],
-                ),
+                )
             )
+            if disk_path:
+                summary += "\n\nAlso saved to: {}".format(disk_path)
+
+            # Close the progress dialog before showing the result so it
+            # doesn't sit behind the message box.
+            progress.close()
+            QtWidgets.QMessageBox.information(self, "Gridded Rugosity", summary)
             self.accept()
         finally:
+            progress.close()
             self.setEnabled(True)
+            # Clean up temp file + dir. shutil.rmtree handles non-empty
+            # dirs; ignore_errors covers the unlikely race with antivirus
+            # scanners holding the file open briefly after the import.
+            import shutil
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 def run_script():
