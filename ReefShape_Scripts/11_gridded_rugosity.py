@@ -374,19 +374,67 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     # (b) world → shape: used only for shape-units-per-meter.
     M_world_to_shape, *_ = np.linalg.lstsq(calib_world_c, calib_shape_c, rcond=None)
 
-    # Row i of M is the shape-space vector produced by a 1-unit step along
-    # axis i of the input frame, so |row i| = shape units per unit of that
-    # frame. Average across X and Y for an isotropic estimate (the two
-    # are equal for projected CRSes and within <1% for geographic over
-    # a reef-plot extent).
-    shape_per_meter = 0.5 * (
-        math.hypot(M_world_to_shape[0, 0], M_world_to_shape[0, 1])
-        + math.hypot(M_world_to_shape[1, 0], M_world_to_shape[1, 1])
-    )
+    # Row i of an affine M is the shape-space vector produced by a 1-unit
+    # step along axis i of the input frame, so |row i| = shape units per
+    # unit of that frame.
     shape_per_internal = 0.5 * (
         math.hypot(M_int_to_shape[0, 0], M_int_to_shape[0, 1])
         + math.hypot(M_int_to_shape[1, 0], M_int_to_shape[1, 1])
     )
+
+    # shape-per-horizontal-meter calculation.
+    #
+    # NAIVE APPROACH (what we did first): use the same row-magnitude trick
+    # on the world→shape affine. This works perfectly for projected and
+    # local-meter CRSes — chunk.crs's XY plane is the local horizontal,
+    # so a 1m step in ECEF X is a 1m horizontal step. For GEOGRAPHIC
+    # CRSes (WGS84+EGM96), it's wrong: world coords are ECEF
+    # (geocentric), and the ECEF X/Y axes are tilted relative to local
+    # horizontal at any non-equatorial latitude. A "1 m step in ECEF X"
+    # has a vertical component, so the 2D affine (which only sees the
+    # ECEF XY projection) treats less than 1 m of horizontal motion as a
+    # full meter — overestimating shape-per-meter by 1/cos(...something
+    # like the angle between ECEF X and local horizontal). We observed
+    # 1.85× error at 25°N latitude.
+    #
+    # CORRECT APPROACH: chunk.crs.localframe(point) returns a Metashape
+    # matrix that maps local east-north-up offsets at the given point to
+    # ECEF. Probe a 1m east step and a 1m north step in that frame and
+    # measure the shape-CRS distance directly. For projected/local CRSes
+    # this gives identical results to the naive approach (localframe is
+    # ~identity); for geographic it gives the correct degrees-per-meter
+    # at the plot's exact latitude. Falls back to the affine slope if
+    # localframe isn't exposed (older Metashape versions).
+    ref_world_np = calib_world[:, :3].mean(axis=0)
+    ref_world_vec = Metashape.Vector([float(ref_world_np[0]),
+                                       float(ref_world_np[1]),
+                                       float(ref_world_np[2])])
+    shape_per_meter = None
+    spm_method = ""
+    try:
+        local_frame = chunk.crs.localframe(ref_world_vec)
+        ref_shape = shape_crs.project(ref_world_vec)
+        east_world = local_frame.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
+        east_shape = shape_crs.project(east_world)
+        east_dist = math.hypot(east_shape.x - ref_shape.x,
+                               east_shape.y - ref_shape.y)
+        north_world = local_frame.mulp(Metashape.Vector([0.0, 1.0, 0.0]))
+        north_shape = shape_crs.project(north_world)
+        north_dist = math.hypot(north_shape.x - ref_shape.x,
+                                north_shape.y - ref_shape.y)
+        shape_per_meter = 0.5 * (east_dist + north_dist)
+        spm_method = "localframe probe"
+    except Exception as e:
+        print("  note: chunk.crs.localframe failed ({}); "
+              "falling back to world→shape affine slope".format(e))
+
+    if shape_per_meter is None or shape_per_meter <= 0:
+        shape_per_meter = 0.5 * (
+            math.hypot(M_world_to_shape[0, 0], M_world_to_shape[0, 1])
+            + math.hypot(M_world_to_shape[1, 0], M_world_to_shape[1, 1])
+        )
+        spm_method = "world→shape affine slope (no localframe)"
+
     # meters per internal unit = (shape/internal) / (shape/meter)
     meters_per_internal = shape_per_internal / shape_per_meter
 
@@ -402,7 +450,8 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
             meters_per_internal, ts_reported))
     else:
         print("  meters/internal: {:.6g}".format(meters_per_internal))
-    print("  shape-CRS units per meter: {:.6g}".format(shape_per_meter))
+    print("  shape-CRS units per meter: {:.6g}  ({})".format(
+        shape_per_meter, spm_method))
 
     # Convert areas to m² using the empirical scale.
     areas_3d = areas_internal * (meters_per_internal ** 2)
