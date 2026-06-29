@@ -72,9 +72,12 @@ from rasterio.transform import from_origin  # noqa: E402
 from rasterio.features import rasterize as rio_rasterize  # noqa: E402
 
 
-CELL_SIZE_M = 1.0  # 1-meter grid cells
+DEFAULT_CELL_SIZE_M = 1.0   # default grid resolution (slider start position)
+MIN_CELL_SIZE_M = 0.25      # slider minimum
+MAX_CELL_SIZE_M = 5.0       # slider maximum
+CELL_SIZE_STEP_M = 0.25     # slider granularity
 NODATA = -9999.0
-RASTER_LABEL = "Rugosity"  # what the imported DEM is labeled in the chunk
+RASTER_LABEL_PREFIX = "Rugosity"  # final label is e.g. "Rugosity (1.0m grid)"
 
 
 def _show_error(parent, title, msg):
@@ -241,7 +244,14 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     if len(boundary_xy) < 3:
         raise RuntimeError("Boundary polygon has fewer than 3 vertices.")
 
-    # --- 2. Mesh vertices and faces as numpy arrays (chunk-local meters) ---
+    # --- 2. Mesh vertices and faces as numpy arrays ---
+    # IMPORTANT: chunk.model.vertices stores coordinates in CHUNK-INTERNAL
+    # units, not world meters. The chunk transform (which encodes rotation,
+    # translation, AND a scale factor) converts internal → world. For a
+    # chunk with chunk.transform.scale != 1, treating internal coords as
+    # meters silently mis-sizes both the per-cell area calculation AND the
+    # shape-CRS cell footprint. We transform every vertex through the
+    # chunk transform here so everything downstream works in real meters.
     n_verts = len(chunk.model.vertices)
     n_faces = len(chunk.model.faces)
     if n_faces == 0:
@@ -249,7 +259,7 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     print("  mesh: {} vertices, {} faces".format(n_verts, n_faces))
 
     _step("Extracting {:,} mesh vertices…".format(n_verts), 0.05)
-    vert_coords = np.empty((n_verts, 3), dtype=np.float64)
+    vert_internal = np.empty((n_verts, 3), dtype=np.float64)
     verts = chunk.model.vertices
     # Batch with periodic event-pump so the dialog updates and stays
     # responsive. The per-vertex coord access is Python overhead, ~1µs/vert,
@@ -259,13 +269,30 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
         end = min(start + batch, n_verts)
         for i in range(start, end):
             c = verts[i].coord
-            vert_coords[i, 0] = c.x
-            vert_coords[i, 1] = c.y
-            vert_coords[i, 2] = c.z
+            vert_internal[i, 0] = c.x
+            vert_internal[i, 1] = c.y
+            vert_internal[i, 2] = c.z
         if progress is not None:
-            progress.set_progress(0.05 + 0.25 * (end / n_verts))
+            progress.set_progress(0.05 + 0.18 * (end / n_verts))
 
-    _step("Extracting {:,} mesh faces…".format(n_faces), 0.30)
+    _step("Transforming vertices to world meters…", 0.23)
+    # Pull the chunk transform into a numpy 4x4 so we can apply it as a
+    # single vectorized matrix multiply (O(n) flops, sub-second for
+    # millions of vertices). T.mulp on every vertex via a Python loop
+    # would be ~30 sec for a 5M-vertex mesh.
+    T_np = np.empty((4, 4), dtype=np.float64)
+    for r in range(4):
+        for c in range(4):
+            T_np[r, c] = T[r, c]
+    internal_hom = np.column_stack([vert_internal, np.ones(n_verts)])
+    world_hom = internal_hom @ T_np.T
+    # Divide by w in case T ever had a perspective component. For chunk
+    # transforms (rigid + scale only), w stays 1.
+    vert_world = world_hom[:, :3] / world_hom[:, 3:4]
+    # vert_world is now in WORLD METERS (Cartesian — ECEF for geographic
+    # CRSes, local meters for LOCAL_CS, projected meters for UTM, etc.).
+
+    _step("Extracting {:,} mesh faces…".format(n_faces), 0.28)
     face_verts = np.empty((n_faces, 3), dtype=np.int64)
     faces = chunk.model.faces
     batch = max(1, n_faces // 50)
@@ -277,51 +304,65 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
             face_verts[i, 1] = fv[1]
             face_verts[i, 2] = fv[2]
         if progress is not None:
-            progress.set_progress(0.30 + 0.20 * (end / n_faces))
+            progress.set_progress(0.28 + 0.22 * (end / n_faces))
 
-    # --- 3. Triangle 3D areas + centroids, vectorized in chunk-local meters ---
+    # --- 3. Triangle 3D areas + centroids in real world meters ---
     _step("Computing triangle areas…", 0.55)
-    tri = vert_coords[face_verts]  # (n_faces, 3, 3)
+    tri = vert_world[face_verts]  # (n_faces, 3, 3) — world meters
     v0, v1, v2 = tri[:, 0], tri[:, 1], tri[:, 2]
     e1 = v1 - v0
     e2 = v2 - v0
-    areas_3d = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)  # m²
-    centroids_local = (v0 + v1 + v2) / 3.0
+    areas_3d = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)  # actually m² now
+    centroids_world = (v0 + v1 + v2) / 3.0
 
-    # --- 4. Linearized chunk-local-XY → shape-CRS-XY projection ---
-    # Sample ~50 vertices, project each through T.mulp + shape_crs.project,
-    # fit a 2D affine. For LOCAL_CS this is exact. For projected/geographic
-    # CRSes over a typical reef plot (< ~100 m) the linear approximation is
-    # accurate to well under a millimeter. Seeded random sample → identical
-    # affine across runs/timepoints with identical mesh, so cell assignment
-    # is reproducible.
-    _step("Calibrating chunk → shape-CRS projection…", 0.65)
+    # --- 4. Linearized world → shape-CRS projection ---
+    # Sample ~50 world points, project each through shape_crs.project, then
+    # fit a 2D affine. World coords are Cartesian meters (ECEF for
+    # geographic CRSes, local meters for LOCAL_CS / UTM), so the column
+    # magnitudes of the fit affine ARE shape-CRS-units per meter — exactly
+    # what we need for the cell size. For LOCAL_CS this is exact; for
+    # geographic over a typical reef plot the linear approximation is
+    # accurate to << 1 mm.
+    #
+    # We center the calibration points before fitting because ECEF
+    # coordinates are ~6.4×10⁶ m magnitude; without centering, the rank-1
+    # update of the lstsq matrix loses precision in the small in-plot
+    # offsets we actually care about.
+    _step("Calibrating world → shape-CRS projection…", 0.62)
     rng = np.random.RandomState(42)
     n_calib = min(50, n_verts)
     calib_idx = rng.choice(n_verts, n_calib, replace=False)
-    calib_local = vert_coords[calib_idx]
+    calib_world = vert_world[calib_idx]
     calib_shape = np.empty((n_calib, 2), dtype=np.float64)
-    for i, lc in enumerate(calib_local):
-        world = T.mulp(Metashape.Vector([lc[0], lc[1], lc[2]]))
-        s = shape_crs.project(world)
+    for i in range(n_calib):
+        w = Metashape.Vector([float(calib_world[i, 0]),
+                              float(calib_world[i, 1]),
+                              float(calib_world[i, 2])])
+        s = shape_crs.project(w)
         calib_shape[i] = (s.x, s.y)
 
-    aug = np.column_stack([calib_local[:, :2], np.ones(n_calib)])
-    coeffs_x, *_ = np.linalg.lstsq(aug, calib_shape[:, 0], rcond=None)
-    coeffs_y, *_ = np.linalg.lstsq(aug, calib_shape[:, 1], rcond=None)
+    world_center = calib_world[:, :2].mean(axis=0)
+    shape_center = calib_shape.mean(axis=0)
+    calib_world_c = calib_world[:, :2] - world_center
+    calib_shape_c = calib_shape - shape_center
+    # Solve calib_shape_c ≈ calib_world_c @ M for the 2×2 matrix M.
+    # No constant term needed (both sides are centered).
+    M, *_ = np.linalg.lstsq(calib_world_c, calib_shape_c, rcond=None)
+    # M[i, j] = ∂(shape_axis_j) / ∂(world_axis_i)
+    # Row i of M is the shape-space vector produced by a 1-meter step along
+    # world axis i. The magnitude of row i is therefore shape-units per
+    # meter for that axis.
+    sx_per_m = math.hypot(M[0, 0], M[0, 1])
+    sy_per_m = math.hypot(M[1, 0], M[1, 1])
+    shape_units_per_meter = (sx_per_m + sy_per_m) / 2.0
+    cell_size_units = cell_size_m * shape_units_per_meter
+    print("  shape-CRS units per meter: {:.6g}".format(shape_units_per_meter))
+    print("  cell size: {:.6g} shape-CRS units ({} m on the ground)".format(
+        cell_size_units, cell_size_m))
 
-    centroids_aug = np.column_stack([centroids_local[:, :2], np.ones(n_faces)])
-    centroids_shape = np.column_stack([centroids_aug @ coeffs_x,
-                                       centroids_aug @ coeffs_y])
-
-    # Scale = shape CRS units per meter, from the affine matrix's mean axis
-    # length. For LOCAL/UTM this is ~1; for geographic ~1/111000.
-    sx = math.hypot(coeffs_x[0], coeffs_y[0])
-    sy = math.hypot(coeffs_x[1], coeffs_y[1])
-    scale = (sx + sy) / 2.0
-    cell_size_units = cell_size_m * scale
-    print("  CRS scale: {:.6g} shape-CRS units per meter".format(scale))
-    print("  cell size: {:.6g} shape-CRS units ({} m)".format(cell_size_units, cell_size_m))
+    # Project all centroids → shape XY by applying the same centered affine.
+    centroids_world_c = centroids_world[:, :2] - world_center
+    centroids_shape = (centroids_world_c @ M) + shape_center
 
     # --- 5. Build grid: bbox of boundary, snapped to cell_size multiples ---
     _step("Building grid…", 0.75)
@@ -434,15 +475,38 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         # --- Widgets ---
         intro = QtWidgets.QLabel(
             "Computes per-cell rugosity (3D / 2D surface area ratio) on a "
-            "1-meter grid within the active chunk's OuterBoundary polygon. "
-            "The result is imported back into the chunk as a labeled DEM "
-            '("Rugosity"), alongside (not replacing) the project\'s real DEM.\n\n'
+            "user-selected grid within the active chunk's OuterBoundary "
+            "polygon. The result is imported back into the chunk as a "
+            'labeled DEM, alongside (not replacing) the project\'s real DEM.\n\n'
             "Captures overhangs correctly via single-pass mesh iteration — "
             "no per-cell mesh clipping, so it's fast even on large meshes.\n\n"
             "Requires a 3D model and an OuterBoundary polygon in the active "
             "chunk."
         )
         intro.setWordWrap(True)
+
+        # Cell-size slider. QSlider is integer-valued, so we work in steps
+        # of CELL_SIZE_STEP_M (0.25 m); the displayed/stored value is the
+        # step count × step size. Reasonable range is 0.25 m (fine-grained,
+        # bigger output raster) to 5 m (coarse, tiny output raster).
+        self.labelCellSize = QtWidgets.QLabel("Cell size:")
+        self.sliderCellSize = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        n_steps_min = int(round(MIN_CELL_SIZE_M / CELL_SIZE_STEP_M))
+        n_steps_max = int(round(MAX_CELL_SIZE_M / CELL_SIZE_STEP_M))
+        n_steps_default = int(round(DEFAULT_CELL_SIZE_M / CELL_SIZE_STEP_M))
+        self.sliderCellSize.setRange(n_steps_min, n_steps_max)
+        self.sliderCellSize.setValue(n_steps_default)
+        self.sliderCellSize.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        # A tick at each integer-meter mark so the slider is easy to land on.
+        self.sliderCellSize.setTickInterval(int(round(1.0 / CELL_SIZE_STEP_M)))
+        self.sliderCellSize.setToolTip(
+            "Grid cell size in meters. Smaller cells give a finer rugosity "
+            "raster but a larger output file; larger cells give a smaller, "
+            "coarser raster. 1 m is the typical default for reef plots.")
+        self.labelCellSizeValue = QtWidgets.QLabel()
+        self.labelCellSizeValue.setMinimumWidth(60)
+        self._refreshCellSizeLabel()
+        self.sliderCellSize.valueChanged.connect(self._refreshCellSizeLabel)
 
         self.checkSaveDisk = QtWidgets.QCheckBox(
             "Also save raster to disk (GeoTIFF)")
@@ -463,6 +527,11 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         self.btnClose.setFixedSize(100, 40)
 
         # --- Layout ---
+        cell_layout = QtWidgets.QHBoxLayout()
+        cell_layout.addWidget(self.labelCellSize)
+        cell_layout.addWidget(self.sliderCellSize, 1)
+        cell_layout.addWidget(self.labelCellSizeValue)
+
         dir_layout = QtWidgets.QHBoxLayout()
         dir_layout.addWidget(self.labelOutDir)
         dir_layout.addWidget(self.txtOutDir)
@@ -475,6 +544,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
         main_layout = QtWidgets.QVBoxLayout()
         main_layout.addWidget(intro)
+        main_layout.addLayout(cell_layout)
         main_layout.addWidget(self.checkSaveDisk)
         main_layout.addLayout(dir_layout)
         main_layout.addStretch(1)
@@ -491,6 +561,14 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         # --- Signals ---
         self.btnOk.clicked.connect(self.run)
         self.btnClose.clicked.connect(self.reject)
+
+    def _cellSize(self):
+        '''Current slider value converted to meters.'''
+        return self.sliderCellSize.value() * CELL_SIZE_STEP_M
+
+    def _refreshCellSizeLabel(self):
+        '''Slot wired to slider valueChanged.'''
+        self.labelCellSizeValue.setText("{:.2f} m".format(self._cellSize()))
 
     def _onSaveDiskToggled(self, checked):
         self.labelOutDir.setEnabled(checked)
@@ -544,6 +622,13 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 "selected. Either uncheck \"Also save raster to disk\" or "
                 "pick a folder.")
 
+        cell_size_m = self._cellSize()
+        # Filename token in centimeters keeps the value integer regardless
+        # of the chosen step (25cm, 50cm, 100cm, ...) so we never end up
+        # with awkward decimals in filenames.
+        cell_size_cm = int(round(cell_size_m * 100))
+        raster_label = "{} ({:.2f}m grid)".format(RASTER_LABEL_PREFIX, cell_size_m)
+
         # Build a target filename (used both for disk export and as the
         # importRaster source name; Metashape sometimes uses the filename
         # for the chunk-product label until we rename it).
@@ -553,7 +638,8 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 project_name = project_name[:-len(ext)]
                 break
         chunk_label = self.chunk.label or "chunk"
-        out_basename = "{}_{}_rugosity_1m.tif".format(project_name, chunk_label)
+        out_basename = "{}_{}_rugosity_{}cm.tif".format(
+            project_name, chunk_label, cell_size_cm)
 
         self.setEnabled(False)
         progress = _ProgressDialog(self, "Gridded Rugosity")
@@ -564,10 +650,11 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         temp_path = os.path.join(temp_dir, out_basename)
         try:
             print("Gridded Rugosity:")
+            print("  cell size: {:.2f} m".format(cell_size_m))
             print("  temp file: {}".format(temp_path))
 
             data, transform, crs_wkt, stats = compute_gridded_rugosity(
-                self.chunk, boundary, CELL_SIZE_M, progress=progress)
+                self.chunk, boundary, cell_size_m, progress=progress)
 
             progress.set_status("Writing GeoTIFF…")
             progress.set_progress(0.95)
@@ -575,7 +662,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
             progress.set_status("Importing into chunk as DEM…")
             progress.set_progress(0.98)
-            new_elev = _import_raster_to_chunk(self.chunk, temp_path, RASTER_LABEL)
+            new_elev = _import_raster_to_chunk(self.chunk, temp_path, raster_label)
             if new_elev is None:
                 print("  WARNING: importRaster succeeded but no new elevation "
                       "entry was found in the chunk. Skipping rename.")
@@ -602,13 +689,14 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 print("  global rugosity: {:.3f}".format(stats["global"]))
 
             summary = (
-                "Imported as DEM \"{}\" in the active chunk.\n\n"
+                "Imported as DEM \"{label}\" in the active chunk.\n\n"
+                "Cell size: {csize:.2f} m\n"
                 "Cells with data: {n}\nMean: {mean:.3f}\n"
                 "Median: {median:.3f}\nMax: {max:.3f}\n\n"
                 "Global rugosity (sum of 3D area / total cell footprint): "
                 "{glob:.3f}\n(Matches what \"Calculate Surface Area Ratio\" "
                 "reports for the whole plot.)".format(
-                    RASTER_LABEL,
+                    label=raster_label, csize=cell_size_m,
                     n=stats["n_cells"], mean=stats["mean"],
                     median=stats["median"], max=stats["max"],
                     glob=stats["global"],
