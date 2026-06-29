@@ -412,13 +412,22 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     shape_per_meter = None
     spm_method = ""
     try:
-        local_frame = chunk.crs.localframe(ref_world_vec)
+        # chunk.crs.localframe(p) returns the matrix that converts ECEF →
+        # local east-north-up at p ("matrix to local LSE" per the docs).
+        # We want the OPPOSITE direction (LSE → ECEF) so that feeding a
+        # (1, 0, 0) "1 m east in LSE" probe gives us the ECEF coordinates
+        # of the point 1 m east of ref. So we invert the returned matrix.
+        # Applying the un-inverted matrix to (1, 0, 0) instead returns the
+        # LSE coords of the ECEF point at (1, 0, 0) — near Earth's center,
+        # ~6 400 km from any reef plot — which projects to wildly wrong
+        # shape distances (we observed 203 degrees per "meter").
+        local_to_ecef = chunk.crs.localframe(ref_world_vec).inv()
         ref_shape = shape_crs.project(ref_world_vec)
-        east_world = local_frame.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
+        east_world = local_to_ecef.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
         east_shape = shape_crs.project(east_world)
         east_dist = math.hypot(east_shape.x - ref_shape.x,
                                east_shape.y - ref_shape.y)
-        north_world = local_frame.mulp(Metashape.Vector([0.0, 1.0, 0.0]))
+        north_world = local_to_ecef.mulp(Metashape.Vector([0.0, 1.0, 0.0]))
         north_shape = shape_crs.project(north_world)
         north_dist = math.hypot(north_shape.x - ref_shape.x,
                                 north_shape.y - ref_shape.y)
