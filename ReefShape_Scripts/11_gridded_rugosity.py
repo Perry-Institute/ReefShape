@@ -259,6 +259,22 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     if len(boundary_xy) < 3:
         raise RuntimeError("Boundary polygon has fewer than 3 vertices.")
 
+    # Boundary bbox + centroid in shape CRS. Used in two places:
+    #   - As the deterministic location for the localframe probe later
+    #     (so shape_per_meter is identical between two timepoints sharing
+    #     the same boundary polygon — without this, the probe location
+    #     would depend on the random mesh vertex sample and drift by tiny
+    #     amounts per run).
+    #   - As the anchor for the grid snap (so the cells of two
+    #     timepoints sharing the same boundary land at identical positions).
+    # Anchoring to the boundary itself rather than to the CRS origin matters
+    # because at typical reef latitudes |bx_min| / cell_size_units is ~1e7
+    # — any 1e-13 wiggle in cell_size_units gets multiplied by that ratio
+    # at snap time and shifts the grid origin by entire cells.
+    bx_min, by_min = boundary_xy.min(axis=0)
+    bx_max, by_max = boundary_xy.max(axis=0)
+    boundary_z = float(np.median([float(v.z) for v in ring]))
+
     # --- 2. Mesh vertices and faces as numpy arrays ---
     # IMPORTANT: chunk.model.vertices stores coordinates in CHUNK-INTERNAL
     # units, not world meters. The chunk transform (which encodes rotation,
@@ -405,10 +421,30 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     # ~identity); for geographic it gives the correct degrees-per-meter
     # at the plot's exact latitude. Falls back to the affine slope if
     # localframe isn't exposed (older Metashape versions).
-    ref_world_np = calib_world[:, :3].mean(axis=0)
-    ref_world_vec = Metashape.Vector([float(ref_world_np[0]),
-                                       float(ref_world_np[1]),
-                                       float(ref_world_np[2])])
+    # Reference point for the localframe probe is the boundary's centroid
+    # in shape CRS, unprojected to ECEF. Using a boundary-derived point
+    # (not a mesh-derived one) is what makes shape_per_meter — and
+    # therefore cell_size_units — identical between two timepoints sharing
+    # the same boundary polygon. Drift from a mesh-derived reference is
+    # too small to matter for the math (sub-mm per meter on a reef plot),
+    # but it's enough to nudge floor() snap decisions and offset the grid
+    # by entire cells when multiplied by the ~1e7 scale of lat/long
+    # coordinates over the CRS origin.
+    bx_center = 0.5 * (bx_min + bx_max)
+    by_center = 0.5 * (by_min + by_max)
+    ref_shape_for_probe = Metashape.Vector(
+        [float(bx_center), float(by_center), float(boundary_z)])
+    try:
+        ref_world_vec = shape_crs.unproject(ref_shape_for_probe)
+    except Exception:
+        # Fallback: use mesh-vertex mean (the older, slightly drift-prone
+        # behavior). Worse for cross-timepoint alignment but at least the
+        # localframe call still has a sensible ECEF input.
+        ref_world_np = calib_world[:, :3].mean(axis=0)
+        ref_world_vec = Metashape.Vector(
+            [float(ref_world_np[0]), float(ref_world_np[1]),
+             float(ref_world_np[2])])
+
     shape_per_meter = None
     spm_method = ""
     try:
@@ -473,16 +509,23 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     centroids_int_c = centroids_internal[:, :2] - int_center
     centroids_shape = (centroids_int_c @ M_int_to_shape) + shape_center
 
-    # --- 5. Build grid: bbox of boundary, snapped to cell_size multiples ---
+    # --- 5. Build grid anchored to the boundary's own bounding box ---
+    # Grid origin = boundary's (min_x, max_y) corner. This guarantees that
+    # two timepoints sharing the same boundary polygon produce pixel-
+    # aligned rasters regardless of any tiny per-run variation in
+    # cell_size_units. The previous "snap to CRS origin" approach
+    # multiplied bx_min (~−77 deg for a Caribbean plot) by 1/cell_size_units
+    # (~1e5 per meter), amplifying any 1e-13 noise into entire-cell
+    # offsets. Anchoring to the boundary itself sidesteps that
+    # amplification: left_x = bx_min exactly, and the boundary is
+    # identical between runs.
     _step("Building grid…", 0.75)
-    bx_min, by_min = boundary_xy.min(axis=0)
-    bx_max, by_max = boundary_xy.max(axis=0)
-    left_x = math.floor(bx_min / cell_size_units) * cell_size_units
-    right_x = math.ceil(bx_max / cell_size_units) * cell_size_units
-    bottom_y = math.floor(by_min / cell_size_units) * cell_size_units
-    top_y = math.ceil(by_max / cell_size_units) * cell_size_units
-    n_cols = max(1, int(round((right_x - left_x) / cell_size_units)))
-    n_rows = max(1, int(round((top_y - bottom_y) / cell_size_units)))
+    left_x = float(bx_min)
+    top_y = float(by_max)
+    n_cols = max(1, int(math.ceil((bx_max - bx_min) / cell_size_units)))
+    n_rows = max(1, int(math.ceil((by_max - by_min) / cell_size_units)))
+    right_x = left_x + n_cols * cell_size_units
+    bottom_y = top_y - n_rows * cell_size_units
     print("  grid: {} cols x {} rows ({} cells total)".format(
         n_cols, n_rows, n_cols * n_rows))
 
