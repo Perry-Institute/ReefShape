@@ -120,6 +120,87 @@ def _estimate_photo_footprint(chunk):
 # Coverage polygon (raster morphology)
 # ---------------------------------------------------------------------------
 
+def _rdp_simplify_open(verts, tolerance):
+    """Ramer-Douglas-Peucker simplification on an OPEN polyline (numpy 2D array).
+
+    Recursive: find the vertex with maximum perpendicular distance from the
+    chord connecting first and last; if that distance is below `tolerance`,
+    drop every intermediate vertex; otherwise split at that vertex and recurse
+    on each half.
+    """
+    if len(verts) < 3:
+        return verts.copy()
+
+    start = verts[0]
+    end = verts[-1]
+    chord = end - start
+    chord_len_sq = chord[0] ** 2 + chord[1] ** 2
+
+    if chord_len_sq < 1e-24:
+        # Degenerate chord (endpoints coincide); keep just the two endpoints.
+        return np.array([start, end])
+
+    # Perpendicular distance from each vertex to the chord, computed as
+    # |(p - start) × chord| / |chord|. The 2D cross product gives a signed
+    # scalar; we take its absolute value.
+    deltas = verts - start
+    cross_z = deltas[:, 0] * chord[1] - deltas[:, 1] * chord[0]
+    perp_dist = np.abs(cross_z) / math.sqrt(chord_len_sq)
+
+    max_idx = int(np.argmax(perp_dist))
+    if perp_dist[max_idx] < tolerance:
+        # Whole run within tolerance of the chord — keep only the endpoints.
+        return np.array([start, end])
+
+    left = _rdp_simplify_open(verts[: max_idx + 1], tolerance)
+    right = _rdp_simplify_open(verts[max_idx:], tolerance)
+    # Concatenate; drop the duplicate vertex at the split point.
+    return np.concatenate([left[:-1], right])
+
+
+def _rdp_simplify(verts, tolerance):
+    """RDP simplification on a CLOSED polygon.
+
+    Collapses runs of near-collinear vertices into single edges. Critical
+    for boundaries traced from a binary raster: the polygonized pixel-edge
+    outline marches along a staircase at the raster's pixel scale, so
+    hundreds of consecutive vertices fall (almost) on the same line and
+    can be discarded without changing the polygon's shape outside
+    `tolerance`. With tolerance set to ~half a pixel, the simplified
+    polygon stays within one pixel of the original outline while losing
+    the high-frequency zigzag entirely — leaving Chaikin smoothing
+    something useful (large-scale corners) to round off rather than just
+    softening a still-jagged outline.
+
+    `verts` is an iterable of (x, y) tuples treated as a closed loop.
+    `tolerance` is in the same units as the vertex coordinates.
+    Returns a new list of (x, y) tuples.
+    """
+    if tolerance <= 0 or len(verts) < 4:
+        return list(verts)
+    pts = np.asarray(verts, dtype=np.float64)
+
+    # For a closed polygon, split at the vertex farthest from pts[0],
+    # run RDP on each resulting open polyline, then rejoin. (A naive
+    # call of RDP on the closed loop's index order would collapse the
+    # entire shape to a single segment because the chord from start to
+    # end has length 0 for a closed polygon.)
+    distances_from_0 = np.linalg.norm(pts - pts[0], axis=1)
+    split_idx = int(np.argmax(distances_from_0))
+    if split_idx == 0:
+        return [(float(pts[0, 0]), float(pts[0, 1]))]
+
+    half1 = pts[: split_idx + 1]
+    # half2 wraps around through the end and back to pts[0] so RDP treats
+    # the closing edge as part of the polyline.
+    half2 = np.concatenate([pts[split_idx:], pts[:1]])
+    simp1 = _rdp_simplify_open(half1, tolerance)
+    simp2 = _rdp_simplify_open(half2, tolerance)
+    # Drop the shared vertex between halves and the closing duplicate.
+    result = np.concatenate([simp1[:-1], simp2[:-1]])
+    return [(float(p[0]), float(p[1])) for p in result]
+
+
 def _chaikin_smooth(verts, iterations):
     """Smooth a closed polygon via Chaikin's corner-cutting algorithm.
 
@@ -229,10 +310,18 @@ def _compute_coverage_polygon(camera_xy, dilation_radius, resolution,
                     ymin + float(row) * resolution)
                    for col, row in longest_verts]
 
-    # Smooth out the pixel staircase. Done after the pixel→chunk-local
-    # conversion (rather than in pixel space) so the smoothing tolerance
-    # is in the same units as the polygon — easier to reason about and
-    # the result is identical.
+    # Two-stage smoothing:
+    #   (1) RDP collapses the pixel-edge staircase into straight segments.
+    #       Tolerance = half a pixel ensures the simplified polygon stays
+    #       within one pixel of the original outline. Without this step,
+    #       Chaikin alone just softens individual zigzag corners without
+    #       eliminating the high-frequency noise, leaving the boundary
+    #       visibly jagged even at moderate plot zoom.
+    #   (2) Chaikin rounds the remaining (now-meaningful) corners between
+    #       straight segments. With RDP first, far fewer vertices feed in,
+    #       so the corner-cutting actually produces a smooth-looking curve
+    #       rather than just dampening the staircase amplitude.
+    verts_chunk = _rdp_simplify(verts_chunk, tolerance=resolution * 0.5)
     return _chaikin_smooth(verts_chunk, smoothing_iterations)
 
 
