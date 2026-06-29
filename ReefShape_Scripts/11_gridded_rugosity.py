@@ -609,6 +609,35 @@ def write_geotiff(path, data, transform, crs_wkt):
         dst.write(data, 1)
 
 
+def _format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
+    '''Build the human-readable summary used by both the completion popup
+    and the (optional) sibling .txt file. Centralised so the popup and the
+    on-disk record can't drift apart — the popup is what users see in the
+    moment; the .txt is what they'll come back to weeks later when doing
+    cross-timepoint analysis. Same text in both keeps records honest.
+
+    `disk_path` is the GeoTIFF location; included as a trailing line so the
+    .txt is self-describing (you can tell which raster it goes with even
+    if filenames get rearranged).
+    '''
+    lines = [
+        'Imported as DEM "{}" in the active chunk.'.format(raster_label),
+        '',
+        'Cell size: {:.2f} m'.format(cell_size_m),
+        'Cells with data: {}'.format(stats['n_cells']),
+        'Mean: {:.3f}'.format(stats['mean']),
+        'Median: {:.3f}'.format(stats['median']),
+        'Max: {:.3f}'.format(stats['max']),
+        '',
+        'Global rugosity (sum of 3D area / total cell footprint): {:.3f}'.format(
+            stats['global']),
+        '(Matches what "Calculate Surface Area Ratio" reports for the whole plot.)',
+    ]
+    if disk_path:
+        lines += ['', 'Also saved to: {}'.format(disk_path)]
+    return '\n'.join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Dialog
 # ---------------------------------------------------------------------------
@@ -674,8 +703,24 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
         self.checkSaveDisk = QtWidgets.QCheckBox(
             "Also save raster to disk (GeoTIFF)")
-        self.checkSaveDisk.setChecked(False)
+        # Restore the saved choice for both export checkboxes. Defaults
+        # to False on first launch — most users compute many times before
+        # they need an on-disk copy.
+        self.checkSaveDisk.setChecked(
+            self.settings.value("save_to_disk", False, type=bool))
         self.checkSaveDisk.toggled.connect(self._onSaveDiskToggled)
+
+        self.checkSaveStats = QtWidgets.QCheckBox(
+            "Also save stats .txt alongside the raster")
+        self.checkSaveStats.setChecked(
+            self.settings.value("save_stats", False, type=bool))
+        self.checkSaveStats.setToolTip(
+            "When the raster is saved, also write a sibling .txt file "
+            "(same basename, .txt extension) containing the cell-size, "
+            "per-cell statistics, and global rugosity — i.e. everything "
+            "shown in the completion popup. Useful for record-keeping and "
+            "for downstream analysis scripts that need to read the summary "
+            "without opening the GeoTIFF.")
 
         self.labelOutDir = QtWidgets.QLabel("Output Folder:")
         self.txtOutDir = QtWidgets.QPlainTextEdit(self.output_dir or "(no folder selected)")
@@ -710,6 +755,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         main_layout.addWidget(intro)
         main_layout.addLayout(cell_layout)
         main_layout.addWidget(self.checkSaveDisk)
+        main_layout.addWidget(self.checkSaveStats)
         main_layout.addLayout(dir_layout)
         main_layout.addStretch(1)
         main_layout.addLayout(btn_layout)
@@ -735,9 +781,14 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         self.labelCellSizeValue.setText("{:.2f} m".format(self._cellSize()))
 
     def _onSaveDiskToggled(self, checked):
+        # The stats .txt is written alongside the raster, so it only makes
+        # sense when the raster itself is being saved to disk. Disable
+        # (but don't uncheck) when the raster save is off — preserves the
+        # user's preference for next time they enable disk export.
         self.labelOutDir.setEnabled(checked)
         self.txtOutDir.setEnabled(checked)
         self.btnOutDir.setEnabled(checked)
+        self.checkSaveStats.setEnabled(checked)
 
     def pickOutDir(self):
         start = self.output_dir or self.project_folder or ""
@@ -780,6 +831,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 "(see scripts 06 or 08) before running this script.")
 
         save_to_disk = self.checkSaveDisk.isChecked()
+        save_stats = save_to_disk and self.checkSaveStats.isChecked()
         if save_to_disk and (not self.output_dir or not os.path.isdir(self.output_dir)):
             raise RuntimeError(
                 "Disk export is checked but no valid output folder is "
@@ -787,10 +839,12 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 "pick a folder.")
 
         cell_size_m = self._cellSize()
-        # Remember the slider choice for next launch — most users settle on
-        # one or two resolutions for their plot sizes and don't want to
-        # re-dial it every time.
+        # Remember the slider choice and the two save checkboxes for next
+        # launch — most users settle on one or two resolutions for their
+        # plot sizes and don't want to re-dial them every time.
         self.settings.setValue("cell_size_m", cell_size_m)
+        self.settings.setValue("save_to_disk", save_to_disk)
+        self.settings.setValue("save_stats", self.checkSaveStats.isChecked())
         # Filename token in centimeters keeps the value integer regardless
         # of the chosen step (25cm, 50cm, 100cm, ...) so we never end up
         # with awkward decimals in filenames.
@@ -836,6 +890,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                       "entry was found in the chunk. Skipping rename.")
 
             disk_path = None
+            stats_path = None
             if save_to_disk:
                 # Copy the temp file to the user's chosen folder. We could
                 # write it directly there too, but routing through temp
@@ -844,6 +899,18 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 disk_path = os.path.join(self.output_dir, out_basename)
                 shutil.copy2(temp_path, disk_path)
                 print("  saved to: {}".format(disk_path))
+                if save_stats:
+                    # Sibling .txt with the same basename (e.g.
+                    # foo_rugosity_100cm.tif → foo_rugosity_100cm.txt).
+                    # Matches the popup contents exactly so the file is a
+                    # complete record without round-tripping through the
+                    # GUI.
+                    stats_path = os.path.splitext(disk_path)[0] + ".txt"
+                    stats_body = _format_stats_text(
+                        raster_label, cell_size_m, stats, disk_path=disk_path)
+                    with open(stats_path, "w", encoding="utf-8") as f:
+                        f.write(stats_body)
+                    print("  stats: {}".format(stats_path))
 
             progress.set_status("Done.")
             progress.set_progress(1.0)
@@ -856,22 +923,10 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                                            stats["min"], stats["max"]))
                 print("  global rugosity: {:.3f}".format(stats["global"]))
 
-            summary = (
-                "Imported as DEM \"{label}\" in the active chunk.\n\n"
-                "Cell size: {csize:.2f} m\n"
-                "Cells with data: {n}\nMean: {mean:.3f}\n"
-                "Median: {median:.3f}\nMax: {max:.3f}\n\n"
-                "Global rugosity (sum of 3D area / total cell footprint): "
-                "{glob:.3f}\n(Matches what \"Calculate Surface Area Ratio\" "
-                "reports for the whole plot.)".format(
-                    label=raster_label, csize=cell_size_m,
-                    n=stats["n_cells"], mean=stats["mean"],
-                    median=stats["median"], max=stats["max"],
-                    glob=stats["global"],
-                )
-            )
-            if disk_path:
-                summary += "\n\nAlso saved to: {}".format(disk_path)
+            summary = _format_stats_text(
+                raster_label, cell_size_m, stats, disk_path=disk_path)
+            if stats_path:
+                summary += "\nStats text: {}".format(stats_path)
 
             # Close the progress dialog before showing the result so it
             # doesn't sit behind the message box.
