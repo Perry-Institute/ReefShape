@@ -3,7 +3,7 @@ Full ReefShape Workflow
 Sam Marshall & Will Greene
 Perry Institute for Marine Science
 
-Version 1.2, June 2025
+Version 1.3, June 2026
 
 Implements ReefShape underwater photogrammetry workflow developed by Will Greene
 Many of the component scripts were written by Will Greene and Asif-ul Islam

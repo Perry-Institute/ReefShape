@@ -237,6 +237,21 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     if shape_crs is None:
         raise RuntimeError("Chunk has no CRS set on shapes or on the chunk itself.")
 
+    # Diagnostic block — surfaces the CRS configuration so an unexpected
+    # pixel size on display (e.g. a chunk where shape CRS units aren't
+    # what you think they are) is debuggable from a single console paste.
+    try:
+        print("  chunk.crs:        {}".format(chunk.crs.name if chunk.crs else "(none)"))
+    except Exception:
+        pass
+    try:
+        if chunk.shapes and chunk.shapes.crs and chunk.shapes.crs is not chunk.crs:
+            print("  chunk.shapes.crs: {}".format(chunk.shapes.crs.name))
+        else:
+            print("  chunk.shapes.crs: (same as chunk.crs)")
+    except Exception:
+        pass
+
     # --- 1. Boundary outer ring in shape CRS (XY) ---
     _step("Reading boundary polygon…", 0.02)
     ring = _extract_boundary_ring(boundary.geometry)
