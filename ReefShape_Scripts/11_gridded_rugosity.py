@@ -275,58 +275,15 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
         if progress is not None:
             progress.set_progress(0.05 + 0.18 * (end / n_verts))
 
-    _step("Transforming vertices to world meters…", 0.23)
-    # Build the FULL model-to-world transform. Two things matter here that
-    # the obvious "just use chunk.transform.matrix" approach gets wrong:
-    #
-    # 1. model.transform must be composed in. mesh.vertices[i].coord is in
-    #    a *model-local* frame, not the chunk-internal frame; model.transform
-    #    is the per-model offset/scale that bridges them. Missing this
-    #    composition silently inflates areas by model.transform.scale**2 —
-    #    we hit this on a real chunk and saw rugosity values 5–10× too
-    #    high. The 03_align_chunks_ICP.py script documents the right
-    #    pipeline: world = chunk.transform.matrix * model.transform * vertex.
-    #
-    # 2. The 4×4 must be extracted from the composed Metashape.Matrix via
-    #    T.mulp(basis_vector) probes, not via M[r, c] tuple indexing. The
-    #    tuple form isn't reliably supported on Metashape.Matrix across
-    #    versions — on some it returns garbage or a Vector that numpy
-    #    coerces incorrectly. Probing with the four points (0,0,0),
-    #    (1,0,0), (0,1,0), (0,0,1) reconstructs the affine matrix exactly
-    #    for any rigid+scale transform (which all chunk transforms are).
+    # Compose the full model→world transform (handles per-model offsets
+    # if model.transform is non-identity). Used only for calibration —
+    # we don't apply this matrix to every vertex, just to the 50 sample
+    # points below, sidestepping any matrix-extraction headaches.
     T_chunk = chunk.transform.matrix
     if chunk.model.transform is not None:
         T_full = T_chunk * chunk.model.transform
     else:
         T_full = T_chunk
-    origin = T_full.mulp(Metashape.Vector([0.0, 0.0, 0.0]))
-    ex = T_full.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
-    ey = T_full.mulp(Metashape.Vector([0.0, 1.0, 0.0]))
-    ez = T_full.mulp(Metashape.Vector([0.0, 0.0, 1.0]))
-    T_np = np.array([
-        [ex.x - origin.x, ey.x - origin.x, ez.x - origin.x, origin.x],
-        [ex.y - origin.y, ey.y - origin.y, ez.y - origin.y, origin.y],
-        [ex.z - origin.z, ey.z - origin.z, ez.z - origin.z, origin.z],
-        [0.0, 0.0, 0.0, 1.0],
-    ], dtype=np.float64)
-    # Sanity check: report the scale factor extracted from the affine.
-    # For a properly georeferenced ReefShape chunk this should be on the
-    # order of 1 (LOCAL_CS, UTM) or ~6.4e6 (ECEF — the radius of Earth);
-    # for any other value the user can spot the misconfiguration here
-    # rather than in mysterious downstream numbers.
-    s_x = float(np.linalg.norm(T_np[:3, 0]))
-    s_y = float(np.linalg.norm(T_np[:3, 1]))
-    s_z = float(np.linalg.norm(T_np[:3, 2]))
-    print("  model→world transform scale: x={:.4g} y={:.4g} z={:.4g}".format(
-        s_x, s_y, s_z))
-
-    internal_hom = np.column_stack([vert_internal, np.ones(n_verts)])
-    world_hom = internal_hom @ T_np.T
-    # Divide by w in case T ever had a perspective component. For chunk
-    # transforms (rigid + scale only), w stays 1.
-    vert_world = world_hom[:, :3] / world_hom[:, 3:4]
-    # vert_world is now in WORLD METERS (Cartesian — ECEF for geographic
-    # CRSes, local meters for LOCAL_CS, projected meters for UTM, etc.).
 
     _step("Extracting {:,} mesh faces…".format(n_faces), 0.28)
     face_verts = np.empty((n_faces, 3), dtype=np.int64)
@@ -342,63 +299,106 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
         if progress is not None:
             progress.set_progress(0.28 + 0.22 * (end / n_faces))
 
-    # --- 3. Triangle 3D areas + centroids in real world meters ---
-    _step("Computing triangle areas…", 0.55)
-    tri = vert_world[face_verts]  # (n_faces, 3, 3) — world meters
+    # --- 3. Triangle areas + centroids in chunk-INTERNAL units ---
+    # We compute geometry in internal units first; the meters_per_internal
+    # conversion factor (from calibration below) converts the areas to m²
+    # exactly when we need them. This avoids transforming every vertex
+    # through a manually-extracted T_np matrix — that path turned out to
+    # be where the previous attempt got the math wrong. Internal-unit
+    # geometry composed with empirical-scale conversion is bulletproof.
+    _step("Computing triangle geometry…", 0.55)
+    tri = vert_internal[face_verts]  # (n_faces, 3, 3) — internal units
     v0, v1, v2 = tri[:, 0], tri[:, 1], tri[:, 2]
     e1 = v1 - v0
     e2 = v2 - v0
-    areas_3d = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)  # actually m² now
-    centroids_world = (v0 + v1 + v2) / 3.0
+    areas_internal = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)  # internal²
+    centroids_internal = (v0 + v1 + v2) / 3.0
 
-    # --- 4. Linearized world → shape-CRS projection ---
-    # Sample ~50 world points, project each through shape_crs.project, then
-    # fit a 2D affine. World coords are Cartesian meters (ECEF for
-    # geographic CRSes, local meters for LOCAL_CS / UTM), so the column
-    # magnitudes of the fit affine ARE shape-CRS-units per meter — exactly
-    # what we need for the cell size. For LOCAL_CS this is exact; for
-    # geographic over a typical reef plot the linear approximation is
-    # accurate to << 1 mm.
+    # --- 4. Calibrate: two affine fits from the same 50 sample points ---
+    # We project 50 sample vertices through Metashape's own
+    # T_full.mulp + shape_crs.project — APIs that are documented and
+    # universally work — and fit:
+    #   (a) internal → shape  (used to project all face centroids onto
+    #       the output grid, fast and vectorized)
+    #   (b) world    → shape  (used only to extract shape-units-per-meter,
+    #       which gives us the correct cell size on the ground)
+    # The ratio of (a)'s row magnitude over (b)'s row magnitude is
+    # meters_per_internal — the scale conversion that turns areas_internal
+    # into real m². Three derived quantities, one set of probes, no
+    # T_np matrix to get wrong.
     #
-    # We center the calibration points before fitting because ECEF
-    # coordinates are ~6.4×10⁶ m magnitude; without centering, the rank-1
-    # update of the lstsq matrix loses precision in the small in-plot
-    # offsets we actually care about.
-    _step("Calibrating world → shape-CRS projection…", 0.62)
+    # Calibration points are centered before lstsq because ECEF
+    # coordinates are ~6.4×10⁶ m magnitude; without centering, lstsq
+    # loses precision in the small in-plot offsets we actually care about.
+    _step("Calibrating internal → world → shape projections…", 0.62)
     rng = np.random.RandomState(42)
     n_calib = min(50, n_verts)
     calib_idx = rng.choice(n_verts, n_calib, replace=False)
-    calib_world = vert_world[calib_idx]
+    calib_internal = vert_internal[calib_idx]
+    calib_world = np.empty((n_calib, 3), dtype=np.float64)
     calib_shape = np.empty((n_calib, 2), dtype=np.float64)
     for i in range(n_calib):
-        w = Metashape.Vector([float(calib_world[i, 0]),
-                              float(calib_world[i, 1]),
-                              float(calib_world[i, 2])])
-        s = shape_crs.project(w)
+        v_int = Metashape.Vector([float(calib_internal[i, 0]),
+                                  float(calib_internal[i, 1]),
+                                  float(calib_internal[i, 2])])
+        v_w = T_full.mulp(v_int)
+        calib_world[i] = (v_w.x, v_w.y, v_w.z)
+        s = shape_crs.project(v_w)
         calib_shape[i] = (s.x, s.y)
 
+    # Center every frame for numerical stability of lstsq.
+    int_center = calib_internal[:, :2].mean(axis=0)
     world_center = calib_world[:, :2].mean(axis=0)
     shape_center = calib_shape.mean(axis=0)
+    calib_int_c = calib_internal[:, :2] - int_center
     calib_world_c = calib_world[:, :2] - world_center
     calib_shape_c = calib_shape - shape_center
-    # Solve calib_shape_c ≈ calib_world_c @ M for the 2×2 matrix M.
-    # No constant term needed (both sides are centered).
-    M, *_ = np.linalg.lstsq(calib_world_c, calib_shape_c, rcond=None)
-    # M[i, j] = ∂(shape_axis_j) / ∂(world_axis_i)
-    # Row i of M is the shape-space vector produced by a 1-meter step along
-    # world axis i. The magnitude of row i is therefore shape-units per
-    # meter for that axis.
-    sx_per_m = math.hypot(M[0, 0], M[0, 1])
-    sy_per_m = math.hypot(M[1, 0], M[1, 1])
-    shape_units_per_meter = (sx_per_m + sy_per_m) / 2.0
-    cell_size_units = cell_size_m * shape_units_per_meter
-    print("  shape-CRS units per meter: {:.6g}".format(shape_units_per_meter))
+
+    # (a) internal → shape: applied to all face centroids below.
+    M_int_to_shape, *_ = np.linalg.lstsq(calib_int_c, calib_shape_c, rcond=None)
+    # (b) world → shape: used only for shape-units-per-meter.
+    M_world_to_shape, *_ = np.linalg.lstsq(calib_world_c, calib_shape_c, rcond=None)
+
+    # Row i of M is the shape-space vector produced by a 1-unit step along
+    # axis i of the input frame, so |row i| = shape units per unit of that
+    # frame. Average across X and Y for an isotropic estimate (the two
+    # are equal for projected CRSes and within <1% for geographic over
+    # a reef-plot extent).
+    shape_per_meter = 0.5 * (
+        math.hypot(M_world_to_shape[0, 0], M_world_to_shape[0, 1])
+        + math.hypot(M_world_to_shape[1, 0], M_world_to_shape[1, 1])
+    )
+    shape_per_internal = 0.5 * (
+        math.hypot(M_int_to_shape[0, 0], M_int_to_shape[0, 1])
+        + math.hypot(M_int_to_shape[1, 0], M_int_to_shape[1, 1])
+    )
+    # meters per internal unit = (shape/internal) / (shape/meter)
+    meters_per_internal = shape_per_internal / shape_per_meter
+
+    # Cross-check against chunk.transform.scale (Metashape's own reported
+    # value). They should agree closely; if they don't, something in the
+    # transform chain is unusual and the printed warning helps diagnose.
+    try:
+        ts_reported = float(chunk.transform.scale)
+    except Exception:
+        ts_reported = None
+    if ts_reported is not None:
+        print("  meters/internal: {:.6g}  (chunk.transform.scale: {:.6g})".format(
+            meters_per_internal, ts_reported))
+    else:
+        print("  meters/internal: {:.6g}".format(meters_per_internal))
+    print("  shape-CRS units per meter: {:.6g}".format(shape_per_meter))
+
+    # Convert areas to m² using the empirical scale.
+    areas_3d = areas_internal * (meters_per_internal ** 2)
+
+    cell_size_units = cell_size_m * shape_per_meter
     print("  cell size: {:.6g} shape-CRS units ({} m on the ground)".format(
         cell_size_units, cell_size_m))
 
-    # Project all centroids → shape XY by applying the same centered affine.
-    centroids_world_c = centroids_world[:, :2] - world_center
-    centroids_shape = (centroids_world_c @ M) + shape_center
+    # Project all centroids → shape XY using the internal→shape affine.
+    centroids_int_c = centroids_internal[:, :2] - int_center
+    centroids_shape = (centroids_int_c @ M_int_to_shape) + shape_center
 
     # --- 5. Build grid: bbox of boundary, snapped to cell_size multiples ---
     _step("Building grid…", 0.75)
@@ -508,6 +508,11 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                                if (self.doc and self.doc.path) else "")
         self.output_dir = self.project_folder
 
+        # Persisted settings (cell size, last save-to-disk choice). Stored
+        # under a separate "GriddedRugosity" key so this tool's preferences
+        # don't entangle with the Full Workflow dialog's settings.
+        self.settings = QtCore.QSettings("ReefShape", "GriddedRugosity")
+
         # --- Widgets ---
         intro = QtWidgets.QLabel(
             "Computes per-cell rugosity (3D / 2D surface area ratio) on a "
@@ -530,8 +535,15 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         n_steps_min = int(round(MIN_CELL_SIZE_M / CELL_SIZE_STEP_M))
         n_steps_max = int(round(MAX_CELL_SIZE_M / CELL_SIZE_STEP_M))
         n_steps_default = int(round(DEFAULT_CELL_SIZE_M / CELL_SIZE_STEP_M))
+        # Restore the last-used cell size from QSettings; fall back to the
+        # default if the saved value is missing or outside the slider range
+        # (which could happen if MIN/MAX/STEP are changed in a future release).
+        saved_cell_size_m = self.settings.value(
+            "cell_size_m", DEFAULT_CELL_SIZE_M, type=float)
+        n_steps_initial = int(round(saved_cell_size_m / CELL_SIZE_STEP_M))
+        n_steps_initial = max(n_steps_min, min(n_steps_max, n_steps_initial))
         self.sliderCellSize.setRange(n_steps_min, n_steps_max)
-        self.sliderCellSize.setValue(n_steps_default)
+        self.sliderCellSize.setValue(n_steps_initial)
         self.sliderCellSize.setTickPosition(QtWidgets.QSlider.TicksBelow)
         # A tick at each integer-meter mark so the slider is easy to land on.
         self.sliderCellSize.setTickInterval(int(round(1.0 / CELL_SIZE_STEP_M)))
@@ -659,6 +671,10 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                 "pick a folder.")
 
         cell_size_m = self._cellSize()
+        # Remember the slider choice for next launch — most users settle on
+        # one or two resolutions for their plot sizes and don't want to
+        # re-dial it every time.
+        self.settings.setValue("cell_size_m", cell_size_m)
         # Filename token in centimeters keeps the value integer regardless
         # of the chosen step (25cm, 50cm, 100cm, ...) so we never end up
         # with awkward decimals in filenames.

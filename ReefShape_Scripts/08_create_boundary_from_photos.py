@@ -3,7 +3,7 @@ Create Boundary from Photos
 
 Generates an OuterBoundary polygon for the active chunk by tracing the outline
 of aligned-camera positions on a binary raster, dilated by the expected photo
-footprint plus a user-specified buffer (default 0.5 m). Holes in the coverage
+footprint. Holes in the coverage
 area are filled.
 
 Useful when corner markers aren't available (e.g. after ICP-aligned timepoints
@@ -30,7 +30,7 @@ Algorithm:
   2. Calibrate scale = (shape-CRS extent) / (chunk-local extent) in meters.
   3. Splat positions onto a 2D raster (in shape-CRS units, but sized to
      ~5 cm/cell after applying the scale).
-  4. Dilate by (photo_footprint + buffer) × scale, using a disk kernel.
+  4. Dilate by photo_footprint × scale, using a disk kernel.
   5. Keep largest connected component (drops outlier cameras).
   6. Fill holes (binary_fill_holes) → single hole-free region.
   7. Marching-squares contour at level=0.5 → ordered shape-CRS vertices.
@@ -120,11 +120,45 @@ def _estimate_photo_footprint(chunk):
 # Coverage polygon (raster morphology)
 # ---------------------------------------------------------------------------
 
-def _compute_coverage_polygon(camera_xy, dilation_radius, resolution):
+def _chaikin_smooth(verts, iterations):
+    """Smooth a closed polygon via Chaikin's corner-cutting algorithm.
+
+    Each iteration replaces every edge AB with two new vertices at 1/4 and
+    3/4 along it, dropping the original corners. The result rounds off
+    sharp angles while preserving the overall shape; the polygon converges
+    to a quadratic B-spline through the original vertices as iterations
+    increase. Vertex count grows by ~2× per iteration, so 1–2 iterations
+    is the sweet spot for removing pixel-staircase artifacts from
+    rasterized polygons without exploding the vertex count.
+
+    `verts` is a list of (x, y) tuples treated as a closed loop (last
+    vertex implicitly connects back to the first). Returns a new list.
+    """
+    if iterations <= 0 or len(verts) < 3:
+        return list(verts)
+    pts = np.asarray(verts, dtype=np.float64)
+    for _ in range(iterations):
+        nxt = np.roll(pts, -1, axis=0)
+        q = 0.75 * pts + 0.25 * nxt   # 1/4 along each edge from the start
+        r = 0.25 * pts + 0.75 * nxt   # 3/4 along each edge (1/4 from end)
+        # Interleave q and r in their original edge order: q0, r0, q1, r1, …
+        pts = np.empty((2 * len(pts), 2), dtype=np.float64)
+        pts[0::2] = q
+        pts[1::2] = r
+    return [tuple(p) for p in pts]
+
+
+def _compute_coverage_polygon(camera_xy, dilation_radius, resolution,
+                              smoothing_iterations=2):
     """Compute the outer boundary of the dilated camera-position raster.
 
     Returns a list of (x, y) tuples in the same coords as `camera_xy` (chunk-
     local meters). Empty list if no coverage region could be found.
+
+    `smoothing_iterations` controls Chaikin corner-cutting passes applied
+    to the raw pixel-edge polygon. 0 disables smoothing entirely (jagged
+    pixel staircase); 1 lightly rounds; 2 (default) gives visibly smooth
+    output suitable for clipping reports/ortho exports.
     """
     xs = camera_xy[:, 0]
     ys = camera_xy[:, 1]
@@ -141,7 +175,7 @@ def _compute_coverage_polygon(camera_xy, dilation_radius, resolution):
     rows = np.clip(((ys - ymin) / resolution).astype(int), 0, ny - 1)
     point_raster[rows, cols] = True
 
-    # Dilate with a disk kernel of radius (footprint + buffer)
+    # Dilate with a disk kernel of radius = photo footprint
     radius_cells = max(1, int(np.ceil(dilation_radius / resolution)))
     yy, xx = np.ogrid[-radius_cells:radius_cells + 1,
                       -radius_cells:radius_cells + 1]
@@ -168,7 +202,7 @@ def _compute_coverage_polygon(camera_xy, dilation_radius, resolution):
     # matplotlib + kiwisolver + pyparsing + cycler + contourpy + fonttools
     # + pillow as deps. The pixel-edge polygon from rasterio is slightly
     # blockier but indistinguishable in practice for a boundary that
-    # already starts from a dilated buffer of camera positions — and 11
+    # already starts from a dilation of the camera positions — and 11
     # already needs rasterio.
     #
     # `connectivity=8` matches the diagonal-neighbour connectivity that
@@ -191,9 +225,15 @@ def _compute_coverage_polygon(camera_xy, dilation_radius, resolution):
 
     # Pixel (col, row) → chunk-local (x, y). rasterio's shapes returns
     # coordinates in pixel space when no transform is supplied.
-    return [(xmin + float(col) * resolution,
-             ymin + float(row) * resolution)
-            for col, row in longest_verts]
+    verts_chunk = [(xmin + float(col) * resolution,
+                    ymin + float(row) * resolution)
+                   for col, row in longest_verts]
+
+    # Smooth out the pixel staircase. Done after the pixel→chunk-local
+    # conversion (rather than in pixel space) so the smoothing tolerance
+    # is in the same units as the polygon — easier to reason about and
+    # the result is identical.
+    return _chaikin_smooth(verts_chunk, smoothing_iterations)
 
 
 # ---------------------------------------------------------------------------
@@ -257,15 +297,15 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
 
         info = QtWidgets.QLabel(
             "Generates an outer-boundary polygon by tracing the outline of "
-            "aligned-camera positions plus the photo footprint and a buffer. "
+            "aligned-camera positions dilated by the photo footprint. "
             "Any holes in the coverage area are filled.")
         info.setWordWrap(True)
 
         self.lblFootprint = QtWidgets.QLabel("Photo footprint radius (m):")
         self.spinFootprint = QtWidgets.QDoubleSpinBox()
-        # Allow 0 so the user can disable footprint dilation entirely and
-        # control the buffer alone (e.g. for a tight hull around the cameras).
-        self.spinFootprint.setRange(0.0, 10.0)
+        # Lower bound > 0 because a footprint of 0 would mean "no dilation"
+        # and we'd get one tiny polygon per camera position.
+        self.spinFootprint.setRange(0.05, 10.0)
         self.spinFootprint.setSingleStep(0.05)
         self.spinFootprint.setDecimals(2)
         self.spinFootprint.setValue(round(auto_footprint, 2))
@@ -274,15 +314,15 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
             "cameras above the tie-point cloud and the camera FOV. Increase "
             "to make the boundary wider, decrease to make it tighter.")
 
-        self.lblBuffer = QtWidgets.QLabel("Buffer outside coverage (m):")
-        self.spinBuffer = QtWidgets.QDoubleSpinBox()
-        self.spinBuffer.setRange(0.0, 10.0)
-        self.spinBuffer.setSingleStep(0.05)
-        self.spinBuffer.setDecimals(2)
-        self.spinBuffer.setValue(0.5)
-        self.spinBuffer.setToolTip(
-            "Extra distance added outside the photo footprint when generating "
-            "the boundary.")
+        self.lblSmoothing = QtWidgets.QLabel("Smoothing passes:")
+        self.spinSmoothing = QtWidgets.QSpinBox()
+        self.spinSmoothing.setRange(0, 5)
+        self.spinSmoothing.setValue(2)
+        self.spinSmoothing.setToolTip(
+            "Chaikin corner-cutting passes applied to the boundary polygon. "
+            "0 = raw pixel staircase (no smoothing); 1 = light rounding; "
+            "2 (default) = visibly smooth; higher values keep rounding but "
+            "double the vertex count each pass.")
 
         self.btnOk = QtWidgets.QPushButton("Create Boundary")
         self.btnCancel = QtWidgets.QPushButton("Cancel")
@@ -293,8 +333,8 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         grid.addWidget(info, 0, 0, 1, 2)
         grid.addWidget(self.lblFootprint, 1, 0)
         grid.addWidget(self.spinFootprint, 1, 1)
-        grid.addWidget(self.lblBuffer, 2, 0)
-        grid.addWidget(self.spinBuffer, 2, 1)
+        grid.addWidget(self.lblSmoothing, 2, 0)
+        grid.addWidget(self.spinSmoothing, 2, 1)
         btns = QtWidgets.QHBoxLayout()
         btns.addStretch(1)
         btns.addWidget(self.btnCancel)
@@ -363,8 +403,8 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         scale_avg = 0.5 * (abs(scale_x) + abs(scale_y))
 
         footprint = float(self.spinFootprint.value())
-        buffer_m = float(self.spinBuffer.value())
-        dilation_m = footprint + buffer_m
+        smoothing = int(self.spinSmoothing.value())
+        dilation_m = footprint
 
         # Convert all distances from meters → shape-CRS units for the raster
         # math, then convert back implicitly (we just keep the boundary in
@@ -373,13 +413,14 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         resolution_m = max(0.02, min(0.10, dilation_m / 10.0))
         resolution_crs = resolution_m * scale_avg
 
-        print("Photo coverage boundary: footprint={:.2f} m, buffer={:.2f} m, "
-              "raster={:.3f} m/cell, scale={:.3e} CRS/m"
-              .format(footprint, buffer_m, resolution_m, scale_avg))
+        print("Photo coverage boundary: footprint={:.2f} m, "
+              "smoothing={} passes, raster={:.3f} m/cell, scale={:.3e} CRS/m"
+              .format(footprint, smoothing, resolution_m, scale_avg))
 
         try:
             boundary_xy_crs = _compute_coverage_polygon(
-                positions_crs[:, :2], dilation_crs, resolution_crs)
+                positions_crs[:, :2], dilation_crs, resolution_crs,
+                smoothing_iterations=smoothing)
         except Exception as exc:
             Metashape.app.messageBox(
                 "Failed to compute coverage polygon: {}".format(exc))

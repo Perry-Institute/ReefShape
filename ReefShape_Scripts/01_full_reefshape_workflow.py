@@ -820,16 +820,37 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             # Restore enabled state for any markers we suppressed before alignment.
             # Now that alignment and optimization are done, marker georef is needed
             # for the chunk transform, boundary creation, and downstream exports.
+            #
+            # CRITICAL: call updateTransform() after re-enabling. Re-enabling
+            # markers alone doesn't tell Metashape to recompute the chunk
+            # transform from the now-enabled reference info — the transform
+            # stays at whatever pre-alignment state it had. Without an
+            # updateTransform here, chunk.region (in internal coords) projects
+            # to nonsense world extents in downstream operations, and
+            # resetRegion + buildDem can produce a multi-thousand-km DEM
+            # bbox that fails to allocate. Observed in the wild on a chunk
+            # that had markers and a boundary copied over by Align Timepoints
+            # but never got a proper transform recompute before mesh + DEM
+            # build.
             if suppressed_markers:
                 for m, original_enabled in suppressed_markers:
                     m.enabled = original_enabled
                 suppressed_markers.clear()
+                self.chunk.updateTransform()
                 self.updateAndSave()
 
             ###### 2. Generate products ######
             # a. build mesh
             # reset reconstruction region to make sure the mesh gets built for the full plot
             self.chunk.resetRegion()
+            # Diagnostic: log the region's internal-unit extent so a future
+            # region-explosion bug (chunk.region inflated by outlier tie
+            # points or a missing updateTransform call) shows up here in
+            # the console rather than 25+ minutes later as a cryptic
+            # `MemoryError: bad allocation` from buildDem.
+            rs = self.chunk.region.size
+            print("  chunk region size (internal units): "
+                  "{:.3g} x {:.3g} x {:.3g}".format(rs.x, rs.y, rs.z))
             self.updateAndSave()
             # try 'task' syntax to enable hidden preferences (ie pm_enable) to be changed
             task = Metashape.Tasks.BuildDepthMaps()
