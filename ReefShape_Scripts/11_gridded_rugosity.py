@@ -276,14 +276,50 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
             progress.set_progress(0.05 + 0.18 * (end / n_verts))
 
     _step("Transforming vertices to world meters…", 0.23)
-    # Pull the chunk transform into a numpy 4x4 so we can apply it as a
-    # single vectorized matrix multiply (O(n) flops, sub-second for
-    # millions of vertices). T.mulp on every vertex via a Python loop
-    # would be ~30 sec for a 5M-vertex mesh.
-    T_np = np.empty((4, 4), dtype=np.float64)
-    for r in range(4):
-        for c in range(4):
-            T_np[r, c] = T[r, c]
+    # Build the FULL model-to-world transform. Two things matter here that
+    # the obvious "just use chunk.transform.matrix" approach gets wrong:
+    #
+    # 1. model.transform must be composed in. mesh.vertices[i].coord is in
+    #    a *model-local* frame, not the chunk-internal frame; model.transform
+    #    is the per-model offset/scale that bridges them. Missing this
+    #    composition silently inflates areas by model.transform.scale**2 —
+    #    we hit this on a real chunk and saw rugosity values 5–10× too
+    #    high. The 03_align_chunks_ICP.py script documents the right
+    #    pipeline: world = chunk.transform.matrix * model.transform * vertex.
+    #
+    # 2. The 4×4 must be extracted from the composed Metashape.Matrix via
+    #    T.mulp(basis_vector) probes, not via M[r, c] tuple indexing. The
+    #    tuple form isn't reliably supported on Metashape.Matrix across
+    #    versions — on some it returns garbage or a Vector that numpy
+    #    coerces incorrectly. Probing with the four points (0,0,0),
+    #    (1,0,0), (0,1,0), (0,0,1) reconstructs the affine matrix exactly
+    #    for any rigid+scale transform (which all chunk transforms are).
+    T_chunk = chunk.transform.matrix
+    if chunk.model.transform is not None:
+        T_full = T_chunk * chunk.model.transform
+    else:
+        T_full = T_chunk
+    origin = T_full.mulp(Metashape.Vector([0.0, 0.0, 0.0]))
+    ex = T_full.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
+    ey = T_full.mulp(Metashape.Vector([0.0, 1.0, 0.0]))
+    ez = T_full.mulp(Metashape.Vector([0.0, 0.0, 1.0]))
+    T_np = np.array([
+        [ex.x - origin.x, ey.x - origin.x, ez.x - origin.x, origin.x],
+        [ex.y - origin.y, ey.y - origin.y, ez.y - origin.y, origin.y],
+        [ex.z - origin.z, ey.z - origin.z, ez.z - origin.z, origin.z],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=np.float64)
+    # Sanity check: report the scale factor extracted from the affine.
+    # For a properly georeferenced ReefShape chunk this should be on the
+    # order of 1 (LOCAL_CS, UTM) or ~6.4e6 (ECEF — the radius of Earth);
+    # for any other value the user can spot the misconfiguration here
+    # rather than in mysterious downstream numbers.
+    s_x = float(np.linalg.norm(T_np[:3, 0]))
+    s_y = float(np.linalg.norm(T_np[:3, 1]))
+    s_z = float(np.linalg.norm(T_np[:3, 2]))
+    print("  model→world transform scale: x={:.4g} y={:.4g} z={:.4g}".format(
+        s_x, s_y, s_z))
+
     internal_hom = np.column_stack([vert_internal, np.ones(n_verts)])
     world_hom = internal_hom @ T_np.T
     # Divide by w in case T ever had a perspective component. For chunk
