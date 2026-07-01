@@ -323,8 +323,11 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
     exactly what's being spawned and refine the match.
     """
 
-    _MATCH_SUBSTRS = ("duplicat", "processing", "loading model",
-                      "loaded mesh", "task")
+    # Known Metashape task popup titles. "Processing in progress..." is
+    # the actual title on 2.x — "duplicating model" is the console log
+    # line, not the popup title, but keep it in case older versions used
+    # it.
+    _MATCH_SUBSTRS = ("processing in progress", "duplicat")
     _SKIP_SUBSTRS = ("rugosity",)
 
     def __init__(self, parent=None):
@@ -355,11 +358,26 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
                 self._log_budget -= 1
                 print("  suppressing task popup: class={} title={!r}".format(
                     type(obj).__name__, title))
-            # Must use close() (or reject/done) — Metashape drives the
-            # popup with a modal exec() loop, so hide()/WA_DontShowOnScreen
-            # deadlocks the task. Queue the close via singleShot(0) so
-            # Qt's event dispatch isn't interrupted mid-Show.
-            QtCore.QTimer.singleShot(0, obj.close)
+            # Do NOT call close() — Metashape's closeEvent handler on
+            # this dialog runs the "Cancel this task?" confirmation and
+            # aborts the task with KeyboardInterrupt if accepted. And
+            # do NOT call hide() / setAttribute(WA_DontShowOnScreen) —
+            # those short-circuit the modal exec() loop and deadlock.
+            #
+            # Instead: leave the dialog fully alive (exec() runs, Meta-
+            # shape's task completes normally, Metashape closes it
+            # itself), but make it invisible in place. Opacity 0 hides
+            # the paint; moving offscreen prevents any mouse interaction
+            # or flicker during the transparent-to-opaque transition on
+            # some window managers.
+            try:
+                obj.setWindowOpacity(0.0)
+            except Exception:
+                pass
+            try:
+                obj.move(-32000, -32000)
+            except Exception:
+                pass
         except Exception:
             # An event filter must never raise — Qt will terminate the
             # app. Swallow anything unexpected.
