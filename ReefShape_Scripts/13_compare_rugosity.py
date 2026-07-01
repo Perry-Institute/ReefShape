@@ -73,6 +73,16 @@ def _export_elevation_to_geotiff(chunk, elevation, path):
     target elevation the chunk's active DEM (exportRaster with
     source_data=ElevationData exports whichever elevation is active),
     then restores the prior active DEM.
+
+    clip_to_boundary=False is critical here — it defaults to True on
+    chunk.exportRaster, which crops the exported grid to the chunk's
+    outer boundary polygon. For rugosity rasters that were generated
+    by 11/12 with the boundary polygon defining the full grid extent
+    (i.e., the raster's grid *already* contains the boundary), the
+    boundary clip re-crops it more tightly and shifts the origin,
+    producing an exported file that doesn't align with the source
+    raster's grid. Passing clip_to_boundary=False preserves the
+    grid bit-for-bit.
     """
     prior_active = chunk.elevation
     try:
@@ -84,6 +94,8 @@ def _export_elevation_to_geotiff(chunk, elevation, path):
             image_format=Metashape.ImageFormat.ImageFormatTIFF,
             resolution=0,  # 0 = native cell size
             save_alpha=False,
+            clip_to_boundary=False,
+            white_background=False,
         )
     finally:
         if prior_active is not None and chunk.elevation is not prior_active:
