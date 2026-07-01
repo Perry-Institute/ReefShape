@@ -93,11 +93,14 @@ class _ProgressDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setWindowModality(QtCore.Qt.WindowModal)
-        self.setFixedSize(500, 200)
-        # Strip the close button so users can't dismiss mid-compute.
+        self.setFixedSize(500, 230)
+        # Strip the close button so users can't dismiss mid-compute (the
+        # Cancel button below is the sanctioned escape hatch).
         flags = self.windowFlags() & ~QtCore.Qt.WindowCloseButtonHint
         flags &= ~QtCore.Qt.WindowSystemMenuHint
         self.setWindowFlags(flags)
+
+        self.cancelled = False
 
         self._heading = QtWidgets.QLabel("Computing gridded rugosity (exact)…")
         self._heading.setWordWrap(True)
@@ -117,6 +120,18 @@ class _ProgressDialog(QtWidgets.QDialog):
         self._bar.setRange(0, 100)
         self._bar.setValue(0)
 
+        self._cancel_btn = QtWidgets.QPushButton("Cancel")
+        self._cancel_btn.setToolTip(
+            "Stop after the current cell finishes. Metashape's in-flight "
+            "DuplicateAsset task can't be interrupted mid-run, so the "
+            "cancel takes effect between cells (up to ~30s wait on a "
+            "large mesh).")
+        self._cancel_btn.clicked.connect(self._onCancel)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._cancel_btn)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(8)
@@ -126,6 +141,15 @@ class _ProgressDialog(QtWidgets.QDialog):
         layout.addWidget(self._timing)
         layout.addStretch(1)
         layout.addWidget(self._bar)
+        layout.addLayout(btn_row)
+
+    def _onCancel(self):
+        self.cancelled = True
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setText("Cancelling…")
+        self._status.setText(
+            "Cancel requested — will stop after the current cell/strip.")
+        QtWidgets.QApplication.processEvents()
 
     def set_status(self, text):
         self._status.setText(text)
@@ -259,6 +283,13 @@ def write_geotiff(path, data, transform, crs_wkt):
 # Per-cell clip-and-measure
 # ---------------------------------------------------------------------------
 
+class _RugosityCancelled(Exception):
+    """Raised by the compute loop when the user hits Cancel on the
+    progress dialog. Caught in _runImpl to skip the "compute failed"
+    error box and just tear down cleanly."""
+    pass
+
+
 def _silent_progress(percent):
     """No-op progress callback for Metashape task.apply() to suppress the
     default GUI progress dialog. Defined at module level (not a lambda) —
@@ -324,14 +355,11 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
                 self._log_budget -= 1
                 print("  suppressing task popup: class={} title={!r}".format(
                     type(obj).__name__, title))
-            # hide() is instant; close() also releases resources but can
-            # provoke Metashape into re-showing on the next tick. hide()
-            # + setAttribute(WA_DontShowOnScreen) is more surgical.
-            obj.hide()
-            try:
-                obj.setAttribute(QtCore.Qt.WA_DontShowOnScreen, True)
-            except Exception:
-                pass
+            # Must use close() (or reject/done) — Metashape drives the
+            # popup with a modal exec() loop, so hide()/WA_DontShowOnScreen
+            # deadlocks the task. Queue the close via singleShot(0) so
+            # Qt's event dispatch isn't interrupted mid-Show.
+            QtCore.QTimer.singleShot(0, obj.close)
         except Exception:
             # An event filter must never raise — Qt will terminate the
             # app. Swallow anything unexpected.
@@ -674,6 +702,14 @@ def compute_gridded_rugosity_exact(chunk, boundary, cell_size_m,
 
     try:
         for i in range(n_to_process):
+            # Honor a user cancel between cells. Metashape's in-flight
+            # DuplicateAsset can't be interrupted, so cancellation is
+            # necessarily coarse-grained (~one cell late).
+            if progress is not None and getattr(progress, "cancelled", False):
+                raise _RugosityCancelled(
+                    "cancelled by user after cell {} of {}".format(
+                        i, n_to_process))
+
             row = int(inside_rows[i])
             col = int(inside_cols[i])
 
@@ -1043,9 +1079,18 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
             except Exception:
                 pass
 
-            data, transform, crs_wkt, stats = compute_gridded_rugosity_exact(
-                self.chunk, boundary, cell_size_m,
-                use_row_strips=use_row_strips, progress=progress)
+            try:
+                data, transform, crs_wkt, stats = compute_gridded_rugosity_exact(
+                    self.chunk, boundary, cell_size_m,
+                    use_row_strips=use_row_strips, progress=progress)
+            except _RugosityCancelled as exc:
+                print("  {}".format(exc))
+                progress.close()
+                QtWidgets.QMessageBox.information(
+                    self, "Gridded Rugosity (Exact)",
+                    "Compute cancelled — no raster was written or imported.")
+                self.reject()
+                return
 
             progress.set_status("Writing GeoTIFF…")
             write_geotiff(temp_path, data, transform, crs_wkt)
