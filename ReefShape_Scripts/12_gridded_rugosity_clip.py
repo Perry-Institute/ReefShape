@@ -269,6 +269,37 @@ def _silent_progress(percent):
     return None
 
 
+class _DuplicateModelDialogSuppressor(QtCore.QObject):
+    """Application-wide event filter that auto-closes Metashape's
+    'Duplicating model...' progress dialog whenever it appears.
+
+    The `progress=_silent_progress` callback on task.apply() controls what
+    gets *reported* into the dialog, but the GUI shell still spawns one
+    for every DuplicateAsset call. With row-strip preprocessing we run
+    ~n_rows + n_cells DuplicateAsset tasks per plot (hundreds of them),
+    so the popup flicker is disruptive. This filter catches the dialog's
+    show event and queues an immediate close, so it never gets a full
+    paint cycle.
+
+    Match rule is conservative — only dialogs whose window title starts
+    with 'Duplicat' (case-insensitive), so we won't accidentally close
+    the script's own _ProgressDialog or any unrelated modal that happens
+    to be up.
+    """
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() == QtCore.QEvent.Show and isinstance(obj, QtWidgets.QDialog):
+                title = (obj.windowTitle() or "").lower()
+                if title.startswith("duplicat"):
+                    QtCore.QTimer.singleShot(0, obj.close)
+        except Exception:
+            # An event filter must never raise — Qt will terminate the
+            # app. Swallow anything unexpected.
+            pass
+        return False
+
+
 def _measure_cell_area(chunk, left, right, bottom, top, z, source_model_key):
     """Add a cell rectangle as an OuterBoundary, duplicate the source model
     clipped to it, read mesh.area(), and clean up. Returns the clipped
@@ -594,6 +625,14 @@ def compute_gridded_rugosity_exact(chunk, boundary, cell_size_m,
     current_row_model = None
     current_source_key = source_model_key  # what to clip *from* per cell
 
+    # Suppress Metashape's per-task 'Duplicating model...' popup for the
+    # duration of the loop. Every DuplicateAsset call spawns one; without
+    # this we'd get hundreds of popups flickering across the screen.
+    dup_suppressor = _DuplicateModelDialogSuppressor()
+    qt_app = QtWidgets.QApplication.instance()
+    if qt_app is not None:
+        qt_app.installEventFilter(dup_suppressor)
+
     try:
         for i in range(n_to_process):
             row = int(inside_rows[i])
@@ -661,6 +700,14 @@ def compute_gridded_rugosity_exact(chunk, boundary, cell_size_m,
                 # remaining 5% for post-loop tasks (stats + GeoTIFF write).
                 progress.set_progress(0.12 + 0.83 * (done / n_to_process))
     finally:
+        # Remove the duplicate-model popup suppressor first thing — if
+        # cleanup below raises, we don't want to leak a global event
+        # filter into the app.
+        if qt_app is not None:
+            try:
+                qt_app.removeEventFilter(dup_suppressor)
+            except Exception:
+                pass
         # Delete the final row's strip model, if any.
         if current_row_model is not None:
             try:
