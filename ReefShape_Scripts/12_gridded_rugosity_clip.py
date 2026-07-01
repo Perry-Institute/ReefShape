@@ -270,29 +270,68 @@ def _silent_progress(percent):
 
 
 class _DuplicateModelDialogSuppressor(QtCore.QObject):
-    """Application-wide event filter that auto-closes Metashape's
-    'Duplicating model...' progress dialog whenever it appears.
+    """Application-wide event filter that auto-hides Metashape's
+    'Duplicating model...' progress popup whenever it appears.
 
     The `progress=_silent_progress` callback on task.apply() controls what
-    gets *reported* into the dialog, but the GUI shell still spawns one
+    gets *reported* into the popup, but the GUI shell still spawns one
     for every DuplicateAsset call. With row-strip preprocessing we run
     ~n_rows + n_cells DuplicateAsset tasks per plot (hundreds of them),
-    so the popup flicker is disruptive. This filter catches the dialog's
-    show event and queues an immediate close, so it never gets a full
-    paint cycle.
+    so the flicker is disruptive.
 
-    Match rule is conservative — only dialogs whose window title starts
-    with 'Duplicat' (case-insensitive), so we won't accidentally close
-    the script's own _ProgressDialog or any unrelated modal that happens
-    to be up.
+    Match rule: any top-level QWidget (window) whose title contains any
+    of the known task-progress phrases (case-insensitive). We match on
+    QWidget rather than QDialog because Metashape's progress popup isn't
+    guaranteed to be a QDialog subclass in every version.
+
+    We deliberately skip anything whose title contains 'rugosity' so
+    the script's own _ProgressDialog isn't caught.
+
+    First few matches print a one-line diagnostic identifying the widget
+    class and title, so if this doesn't work as expected we can see
+    exactly what's being spawned and refine the match.
     """
+
+    _MATCH_SUBSTRS = ("duplicat", "processing", "loading model",
+                      "loaded mesh", "task")
+    _SKIP_SUBSTRS = ("rugosity",)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._log_budget = 3  # print info for the first 3 matches, then quiet
+
+    def _matches(self, title_lower):
+        if not title_lower:
+            return False
+        if any(s in title_lower for s in self._SKIP_SUBSTRS):
+            return False
+        return any(s in title_lower for s in self._MATCH_SUBSTRS)
 
     def eventFilter(self, obj, event):
         try:
-            if event.type() == QtCore.QEvent.Show and isinstance(obj, QtWidgets.QDialog):
-                title = (obj.windowTitle() or "").lower()
-                if title.startswith("duplicat"):
-                    QtCore.QTimer.singleShot(0, obj.close)
+            et = event.type()
+            if et not in (QtCore.QEvent.Show, QtCore.QEvent.WindowActivate):
+                return False
+            if not isinstance(obj, QtWidgets.QWidget):
+                return False
+            if not obj.isWindow():
+                return False
+            title = obj.windowTitle() or ""
+            title_l = title.lower()
+            if not self._matches(title_l):
+                return False
+            if self._log_budget > 0:
+                self._log_budget -= 1
+                print("  suppressing task popup: class={} title={!r}".format(
+                    type(obj).__name__, title))
+            # hide() is instant; close() also releases resources but can
+            # provoke Metashape into re-showing on the next tick. hide()
+            # + setAttribute(WA_DontShowOnScreen) is more surgical.
+            obj.hide()
+            try:
+                obj.setAttribute(QtCore.Qt.WA_DontShowOnScreen, True)
+            except Exception:
+                pass
         except Exception:
             # An event filter must never raise — Qt will terminate the
             # app. Swallow anything unexpected.
