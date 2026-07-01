@@ -289,7 +289,14 @@ def _measure_cell_area(chunk, left, right, bottom, top, z, source_model_key):
         task.asset_key = source_model_key
         task.asset_type = Metashape.DataSource.ModelData
         task.clip_to_boundary = True
-        task.apply(chunk)
+        # Pass a no-op progress callback to suppress Metashape's default
+        # per-task GUI progress dialog. Without this, each cell's
+        # DuplicateAsset flashes a "Duplicating model…" popup that steals
+        # focus and makes the whole loop feel like a slideshow. The
+        # callback signature is `progress(fraction: float) -> None` and
+        # Metashape ignores the return value — a lambda that does nothing
+        # is enough to route progress reporting away from the GUI.
+        task.apply(chunk, progress=lambda p: None)
         # chunk.model is now the duplicated (clipped) mesh
         try:
             area = float(chunk.model.area())
