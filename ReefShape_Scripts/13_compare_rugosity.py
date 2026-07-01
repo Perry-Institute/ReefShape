@@ -67,6 +67,68 @@ def _iter_elevations(chunk):
     return out
 
 
+def _describe_elevation(elev):
+    """Return a short summary string for an Elevation. Metashape's
+    Elevation exposes width/height on most versions; wrap in getattr
+    since older API surfaces have varied."""
+    w = getattr(elev, "width", None)
+    h = getattr(elev, "height", None)
+    res = getattr(elev, "resolution", None)
+    parts = []
+    if w is not None and h is not None:
+        parts.append("{}x{}".format(w, h))
+    if res is not None:
+        parts.append("res={}".format(res))
+    return ", ".join(parts) if parts else "(no size info)"
+
+
+def _dump_elevation_api(elev, label):
+    """One-shot introspection: print every non-private attribute on the
+    Elevation object plus the values of common spatial-extent attrs.
+    Used to find a direct-read API when exportRaster's grid-mangling
+    round-trip is unusable.
+    """
+    print("  ELEVATION API DUMP ({}):".format(label))
+    try:
+        attrs = sorted(a for a in dir(elev) if not a.startswith("_"))
+        print("    dir(): {}".format(attrs))
+    except Exception as exc:
+        print("    dir() failed: {}".format(exc))
+    for attr in ("left", "right", "top", "bottom", "width", "height",
+                 "resolution", "projection", "crs", "path", "meta",
+                 "key", "label", "region", "region2d", "bbox"):
+        try:
+            v = getattr(elev, attr, "(missing)")
+            print("    {} = {!r}".format(attr, v))
+        except Exception as exc:
+            print("    {} = <getattr raised: {}>".format(attr, exc))
+    # image() is a method on many Metashape versions; probe carefully.
+    if hasattr(elev, "image"):
+        try:
+            img = elev.image()
+            print("    image() -> {}".format(type(img).__name__))
+            for iattr in ("width", "height", "cn", "data_type"):
+                try:
+                    print("      image.{} = {!r}".format(
+                        iattr, getattr(img, iattr, "(missing)")))
+                except Exception:
+                    pass
+        except TypeError as exc:
+            print("    image() needs args: {}".format(exc))
+        except Exception as exc:
+            print("    image() failed: {}".format(exc))
+
+
+def _describe_geotiff(path):
+    """Return a short summary string of a GeoTIFF on disk (via rasterio)."""
+    try:
+        with rasterio.open(path) as ds:
+            return "{}x{} @ {} (crs={})".format(
+                ds.width, ds.height, ds.transform, ds.crs)
+    except Exception as exc:
+        return "(unreadable: {})".format(exc)
+
+
 def _export_elevation_to_geotiff(chunk, elevation, path):
     """Export `elevation` from `chunk` to `path` as a GeoTIFF at its
     native resolution and in the chunk's CRS. Temporarily makes the
@@ -74,15 +136,9 @@ def _export_elevation_to_geotiff(chunk, elevation, path):
     source_data=ElevationData exports whichever elevation is active),
     then restores the prior active DEM.
 
-    clip_to_boundary=False is critical here — it defaults to True on
+    clip_to_boundary=False is critical — it defaults to True on
     chunk.exportRaster, which crops the exported grid to the chunk's
-    outer boundary polygon. For rugosity rasters that were generated
-    by 11/12 with the boundary polygon defining the full grid extent
-    (i.e., the raster's grid *already* contains the boundary), the
-    boundary clip re-crops it more tightly and shifts the origin,
-    producing an exported file that doesn't align with the source
-    raster's grid. Passing clip_to_boundary=False preserves the
-    grid bit-for-bit.
+    outer boundary polygon.
     """
     prior_active = chunk.elevation
     try:
@@ -96,17 +152,27 @@ def _export_elevation_to_geotiff(chunk, elevation, path):
             save_alpha=False,
             clip_to_boundary=False,
             white_background=False,
+            north_up=True,
         )
     finally:
         if prior_active is not None and chunk.elevation is not prior_active:
             chunk.elevation = prior_active
+    print("      → wrote {}".format(_describe_geotiff(path)))
 
 
 def _import_raster_to_chunk(chunk, path, label):
     """Import `path` as an Elevation product in `chunk` and rename it to
     `label`. Preserves the previously-active elevation so the newly
     imported raster coexists with (rather than replaces) the chunk's
-    real DEM. Copied from script 12 for consistency."""
+    real DEM.
+
+    Deliberately does NOT pass crs= to importRaster. Passing crs=chunk.crs
+    triggers Metashape to reproject the file into the chunk's CRS even
+    when the file's embedded CRS is functionally identical — that
+    reprojection can shift the grid origin and drop columns on the
+    edges. Letting importRaster use the file's own embedded CRS keeps
+    the grid bit-for-bit if the file was already in the chunk's CRS
+    (which our exports are)."""
     before_keys = set()
     if chunk.elevations:
         before_keys = {e.key for e in chunk.elevations}
@@ -114,7 +180,6 @@ def _import_raster_to_chunk(chunk, path, label):
 
     chunk.importRaster(
         path=path,
-        crs=chunk.crs,
         raster_type=Metashape.DataSource.ElevationData,
     )
 
@@ -126,6 +191,10 @@ def _import_raster_to_chunk(chunk, path, label):
                 break
     if new_elev is not None:
         new_elev.label = label
+        print("      → imported as elevation {} ({})".format(
+            label, _describe_elevation(new_elev)))
+    else:
+        print("      → WARNING: no new elevation entry found post-import")
 
     if prior_active is not None and chunk.elevation is not prior_active:
         chunk.elevation = prior_active
@@ -212,9 +281,28 @@ def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
     new_path = os.path.join(tmp_dir, "new_rugosity.tif")
     ref_path = os.path.join(tmp_dir, "ref_rugosity.tif")
     delta_path = os.path.join(tmp_dir, "rugosity_delta.tif")
+
+    print("  source elevations:")
+    print("    new  ({}): {}".format(
+        new_elev.label, _describe_elevation(new_elev)))
+    print("    ref  ({}): {}".format(
+        ref_elev.label, _describe_elevation(ref_elev)))
+
+    # ONE-SHOT API PROBE: dump every attribute of the active-chunk's
+    # rugosity Elevation so we can find a direct-read API. Metashape's
+    # exportRaster is not grid-preserving (manual UI export produces
+    # different dimensions than the source raster), so round-tripping
+    # through GeoTIFF loses grid alignment. If Elevation exposes
+    # image(), left/right/top/bottom, or a per-cell sampler, we can
+    # bypass exportRaster and build the delta on the source's own
+    # grid. Runs once per compute; safe to leave in for now.
+    _dump_elevation_api(new_elev, "active chunk rugosity")
+
+    print("  exporting new rugosity from active chunk…")
     _export_elevation_to_geotiff(active_chunk, new_elev, new_path)
 
     _step("Exporting reference-chunk rugosity raster…")
+    print("  exporting ref rugosity from reference chunk…")
     _export_elevation_to_geotiff(ref_chunk, ref_elev, ref_path)
 
     _step("Verifying grid alignment…")
