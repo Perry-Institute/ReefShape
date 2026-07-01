@@ -82,82 +82,94 @@ def _describe_elevation(elev):
     return ", ".join(parts) if parts else "(no size info)"
 
 
-def _dump_elevation_api(elev, label):
-    """One-shot introspection: print every non-private attribute on the
-    Elevation object plus the values of common spatial-extent attrs.
-    Used to find a direct-read API when exportRaster's grid-mangling
-    round-trip is unusable.
+def _elevation_grid(elev):
+    """Return (rasterio_transform, width, height, crs_wkt) for the
+    elevation's native grid. The transform maps pixel coords (col, row)
+    into the elevation's own projection (usually the chunk's CRS)."""
+    left = float(elev.left)
+    right = float(elev.right)
+    top = float(elev.top)
+    bottom = float(elev.bottom)
+    width = int(elev.width)
+    height = int(elev.height)
+    dx = (right - left) / width
+    dy = (top - bottom) / height  # positive; from_origin expects positive
+    transform = rasterio.transform.from_origin(left, top, dx, dy)
+    crs_wkt = elev.crs.wkt if elev.crs else ""
+    return transform, width, height, crs_wkt
+
+
+def _sample_elevation_to_array(elev, transform, width, height, progress=None,
+                               progress_prefix="Sampling"):
+    """Sample `elev` at the center of every cell of the (width, height)
+    grid defined by `transform`. Returns a float32 array of shape
+    (height, width) with NODATA sentinels where altitude() returns
+    nan/inf/None (nodata cells in the source).
+
+    We use elev.altitude(Vector([x, y])) directly instead of exporting
+    and re-reading, because chunk.exportRaster is not grid-preserving —
+    it snaps to a slightly different output grid than the source raster,
+    losing edge cells and shifting the origin. altitude() reads the
+    stored per-cell value directly, and when queried at a cell's exact
+    center returns that cell's value with no interpolation ambiguity.
     """
-    print("  ELEVATION API DUMP ({}):".format(label))
-    try:
-        attrs = sorted(a for a in dir(elev) if not a.startswith("_"))
-        print("    dir(): {}".format(attrs))
-    except Exception as exc:
-        print("    dir() failed: {}".format(exc))
-    for attr in ("left", "right", "top", "bottom", "width", "height",
-                 "resolution", "projection", "crs", "path", "meta",
-                 "key", "label", "region", "region2d", "bbox"):
-        try:
-            v = getattr(elev, attr, "(missing)")
-            print("    {} = {!r}".format(attr, v))
-        except Exception as exc:
-            print("    {} = <getattr raised: {}>".format(attr, exc))
-    # image() is a method on many Metashape versions; probe carefully.
-    if hasattr(elev, "image"):
-        try:
-            img = elev.image()
-            print("    image() -> {}".format(type(img).__name__))
-            for iattr in ("width", "height", "cn", "data_type"):
-                try:
-                    print("      image.{} = {!r}".format(
-                        iattr, getattr(img, iattr, "(missing)")))
-                except Exception:
-                    pass
-        except TypeError as exc:
-            print("    image() needs args: {}".format(exc))
-        except Exception as exc:
-            print("    image() failed: {}".format(exc))
+    arr = np.full((height, width), float(NODATA), dtype=np.float32)
+    total = width * height
+    every = max(1, total // 20)
+    n_done = 0
+    n_valid = 0
+    for r in range(height):
+        for c in range(width):
+            # Cell center: (col + 0.5, row + 0.5) in pixel coords.
+            x, y = transform * (c + 0.5, r + 0.5)
+            try:
+                z = elev.altitude(Metashape.Vector([x, y]))
+            except Exception:
+                z = None
+            if z is not None and np.isfinite(z):
+                arr[r, c] = float(z)
+                n_valid += 1
+            n_done += 1
+            if progress is not None and n_done % every == 0:
+                progress.set_status("{} ({} / {} cells, {} with data)".format(
+                    progress_prefix, n_done, total, n_valid))
+    return arr
 
 
-def _describe_geotiff(path):
-    """Return a short summary string of a GeoTIFF on disk (via rasterio)."""
-    try:
-        with rasterio.open(path) as ds:
-            return "{}x{} @ {} (crs={})".format(
-                ds.width, ds.height, ds.transform, ds.crs)
-    except Exception as exc:
-        return "(unreadable: {})".format(exc)
-
-
-def _export_elevation_to_geotiff(chunk, elevation, path):
-    """Export `elevation` from `chunk` to `path` as a GeoTIFF at its
-    native resolution and in the chunk's CRS. Temporarily makes the
-    target elevation the chunk's active DEM (exportRaster with
-    source_data=ElevationData exports whichever elevation is active),
-    then restores the prior active DEM.
-
-    clip_to_boundary=False is critical — it defaults to True on
-    chunk.exportRaster, which crops the exported grid to the chunk's
-    outer boundary polygon.
-    """
-    prior_active = chunk.elevation
-    try:
-        if chunk.elevation is not elevation:
-            chunk.elevation = elevation
-        chunk.exportRaster(
-            path=path,
-            source_data=Metashape.DataSource.ElevationData,
-            image_format=Metashape.ImageFormat.ImageFormatTIFF,
-            resolution=0,  # 0 = native cell size
-            save_alpha=False,
-            clip_to_boundary=False,
-            white_background=False,
-            north_up=True,
-        )
-    finally:
-        if prior_active is not None and chunk.elevation is not prior_active:
-            chunk.elevation = prior_active
-    print("      → wrote {}".format(_describe_geotiff(path)))
+def _verify_source_grids_match(new_elev, ref_elev):
+    """Raise ValueError with a specific message if the two Elevation
+    objects don't share bit-for-bit identical native grids."""
+    if str(new_elev.crs) != str(ref_elev.crs):
+        raise ValueError(
+            "Grid mismatch: CRSes differ.\n"
+            "  new: {}\n  ref: {}\n"
+            "Re-run scripts 11 or 12 with matching CRS settings.".format(
+                new_elev.crs, ref_elev.crs))
+    if (int(new_elev.width), int(new_elev.height)) != (
+            int(ref_elev.width), int(ref_elev.height)):
+        raise ValueError(
+            "Grid mismatch: dimensions differ.\n"
+            "  new: {}×{} cols×rows\n  ref: {}×{} cols×rows\n"
+            "Both rugosity rasters must come from the same boundary "
+            "polygon and cell size. Use script 07 to copy the boundary "
+            "between chunks before running 11/12.".format(
+                new_elev.width, new_elev.height,
+                ref_elev.width, ref_elev.height))
+    # Bbox: allow a small absolute tolerance to absorb float noise from
+    # any internal transforms Metashape may have applied. For a 1 m
+    # cell in WGS84 (~9e-6 degrees), 1e-10 degrees is ~1 μm on the
+    # ground — well under any conceivable numerical drift for identical
+    # inputs, but well over float64 round-trip noise.
+    for attr in ("left", "right", "top", "bottom"):
+        n = float(getattr(new_elev, attr))
+        r = float(getattr(ref_elev, attr))
+        if abs(n - r) > 1e-10:
+            raise ValueError(
+                "Grid mismatch: {} differs.\n"
+                "  new: {}\n  ref: {}\n"
+                "Rugosity rasters were computed with different boundary "
+                "polygons. Use script 07 to copy the boundary between "
+                "chunks, then re-run 11/12.".format(attr, n, r))
 
 
 def _import_raster_to_chunk(chunk, path, label):
@@ -202,43 +214,6 @@ def _import_raster_to_chunk(chunk, path, label):
     return new_elev
 
 
-def _cell_size_m_from_transform(transform):
-    """Best-guess ground cell size in meters from a rasterio Affine.
-    For projected CRSes this is transform.a; for geographic CRSes it's
-    an approximation and only used for labeling."""
-    return abs(float(transform.a))
-
-
-def _verify_grids_match(new_ds, ref_ds):
-    """Raise ValueError with a specific message if the two open rasterio
-    datasets don't share bit-for-bit identical grids."""
-    if str(new_ds.crs) != str(ref_ds.crs):
-        raise ValueError(
-            "Grid mismatch: CRSes differ.\n"
-            "  new: {}\n  ref: {}\n"
-            "Re-run scripts 11 or 12 with matching CRS settings.".format(
-                new_ds.crs, ref_ds.crs))
-    if (new_ds.width, new_ds.height) != (ref_ds.width, ref_ds.height):
-        raise ValueError(
-            "Grid mismatch: dimensions differ.\n"
-            "  new: {}×{} cols×rows\n  ref: {}×{} cols×rows\n"
-            "Both rugosity rasters must come from the same boundary "
-            "polygon and cell size. Use script 07 to copy the boundary "
-            "between chunks before running 11/12.".format(
-                new_ds.width, new_ds.height,
-                ref_ds.width, ref_ds.height))
-    a = np.array(new_ds.transform.to_gdal(), dtype=np.float64)
-    b = np.array(ref_ds.transform.to_gdal(), dtype=np.float64)
-    if not np.allclose(a, b, atol=1e-9, rtol=0.0):
-        raise ValueError(
-            "Grid mismatch: geotransforms differ.\n"
-            "  new: {}\n  ref: {}\n"
-            "The cell size or grid origin doesn't match. Re-run 11 or "
-            "12 on both chunks with the same cell size, and use the "
-            "same boundary polygon (script 07 copies a boundary between "
-            "chunks).".format(new_ds.transform, ref_ds.transform))
-
-
 def write_geotiff(path, data, transform, crs_wkt):
     """Write a single-band float32 GeoTIFF with our nodata sentinel."""
     profile = {
@@ -263,22 +238,21 @@ def write_geotiff(path, data, transform, crs_wkt):
 
 def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
                            progress=None):
-    """Export the new and ref rugosity rasters, verify they share a grid,
-    import the ref into the active chunk as its own DEM, and compute the
-    fractional-change raster.
+    """Verify the two source rugosity elevations share an identical
+    native grid, sample both directly (via elev.altitude() per cell
+    center — no exportRaster round-trip), and compute the fractional-
+    change raster.
 
-    Returns (delta_temp_path, ref_temp_path, imported_ref_label,
-             cell_size_m_est, stats). The caller is responsible for
-    importing the delta raster and (optionally) copying temp files to
-    the user's output folder.
+    Returns (delta_temp_path, ref_temp_path, cell_size_m, stats). Both
+    files are written using the active-chunk elevation's own native
+    grid, so importing them back preserves alignment with the source.
     """
     def _step(text):
         if progress is not None:
             progress.set_status(text)
 
-    _step("Exporting active-chunk rugosity raster…")
     tmp_dir = tempfile.mkdtemp(prefix="reefshape_rugosity_compare_")
-    new_path = os.path.join(tmp_dir, "new_rugosity.tif")
+    new_path = os.path.join(tmp_dir, "new_rugosity.tif")  # for debug only
     ref_path = os.path.join(tmp_dir, "ref_rugosity.tif")
     delta_path = os.path.join(tmp_dir, "rugosity_delta.tif")
 
@@ -288,50 +262,46 @@ def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
     print("    ref  ({}): {}".format(
         ref_elev.label, _describe_elevation(ref_elev)))
 
-    # ONE-SHOT API PROBE: dump every attribute of the active-chunk's
-    # rugosity Elevation so we can find a direct-read API. Metashape's
-    # exportRaster is not grid-preserving (manual UI export produces
-    # different dimensions than the source raster), so round-tripping
-    # through GeoTIFF loses grid alignment. If Elevation exposes
-    # image(), left/right/top/bottom, or a per-cell sampler, we can
-    # bypass exportRaster and build the delta on the source's own
-    # grid. Runs once per compute; safe to leave in for now.
-    _dump_elevation_api(new_elev, "active chunk rugosity")
-
-    print("  exporting new rugosity from active chunk…")
-    _export_elevation_to_geotiff(active_chunk, new_elev, new_path)
-
-    _step("Exporting reference-chunk rugosity raster…")
-    print("  exporting ref rugosity from reference chunk…")
-    _export_elevation_to_geotiff(ref_chunk, ref_elev, ref_path)
-
     _step("Verifying grid alignment…")
-    with rasterio.open(new_path) as new_ds, rasterio.open(ref_path) as ref_ds:
-        _verify_grids_match(new_ds, ref_ds)
-        new_arr = new_ds.read(1).astype(np.float64)
-        ref_arr = ref_ds.read(1).astype(np.float64)
-        new_nodata = new_ds.nodata
-        ref_nodata = ref_ds.nodata
-        transform = new_ds.transform
-        crs_wkt = new_ds.crs.wkt if new_ds.crs else ""
+    _verify_source_grids_match(new_elev, ref_elev)
 
-    cell_size_m = _cell_size_m_from_transform(transform)
+    # Use the active-chunk elevation's own grid definition, verbatim.
+    # verify_source_grids_match has guaranteed the ref matches, so
+    # sampling both at these coords gives cell-for-cell correspondence.
+    transform, width, height, crs_wkt = _elevation_grid(new_elev)
+    cell_size_m = float(new_elev.resolution) if getattr(
+        new_elev, "resolution", None) else abs(float(transform.a))
+
+    print("  sampling grid: {}x{} @ transform={}".format(
+        width, height, transform))
+    print("  cell size (ground meters, from elev.resolution): {:.4f}".format(
+        cell_size_m))
+
+    _step("Sampling active-chunk rugosity ({} cells)…".format(width * height))
+    new_arr = _sample_elevation_to_array(
+        new_elev, transform, width, height, progress=progress,
+        progress_prefix="Sampling active chunk")
+
+    _step("Sampling reference-chunk rugosity ({} cells)…".format(
+        width * height))
+    ref_arr = _sample_elevation_to_array(
+        ref_elev, transform, width, height, progress=progress,
+        progress_prefix="Sampling reference chunk")
 
     _step("Computing fractional change…")
-    # Build a valid-cell mask: neither raster is nodata, and ref is
-    # strictly positive (rugosity is ≥ 1 by definition; zero or negative
-    # means nodata that slipped past the nodata sentinel).
+    # Valid = both cells finite, both non-NODATA sentinel, ref > 0
+    # (rugosity is ≥ 1 by definition; ≤ 0 means nodata that slipped
+    # past our sentinel).
     valid = np.ones_like(new_arr, dtype=bool)
-    if new_nodata is not None:
-        valid &= ~np.isclose(new_arr, new_nodata)
-    if ref_nodata is not None:
-        valid &= ~np.isclose(ref_arr, ref_nodata)
+    valid &= new_arr != NODATA
+    valid &= ref_arr != NODATA
     valid &= np.isfinite(new_arr) & np.isfinite(ref_arr)
     valid &= ref_arr > 0
 
     delta = np.full(new_arr.shape, float(NODATA), dtype=np.float32)
-    delta[valid] = ((new_arr[valid] - ref_arr[valid]) / ref_arr[valid]
-                    ).astype(np.float32)
+    delta[valid] = ((new_arr[valid].astype(np.float64)
+                     - ref_arr[valid].astype(np.float64))
+                    / ref_arr[valid].astype(np.float64)).astype(np.float32)
 
     n_valid = int(valid.sum())
     if n_valid > 0:
@@ -350,8 +320,15 @@ def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
         stats = {"n_cells": 0, "mean": 0, "median": 0, "min": 0, "max": 0,
                  "n_increased": 0, "n_decreased": 0, "n_unchanged": 0}
 
-    _step("Writing delta GeoTIFF…")
+    _step("Writing GeoTIFFs…")
+    # Ref array gets written as a stand-alone GeoTIFF so it can be
+    # imported into the active chunk and viewed alongside the new
+    # rugosity + delta. Same grid → aligns perfectly.
+    write_geotiff(ref_path, ref_arr, transform, crs_wkt)
     write_geotiff(delta_path, delta, transform, crs_wkt)
+    # Also write the new-arr sample for debugging — unused by the
+    # dialog, but useful when diffing against exportRaster's output.
+    write_geotiff(new_path, new_arr, transform, crs_wkt)
 
     return delta_path, ref_path, cell_size_m, stats
 
