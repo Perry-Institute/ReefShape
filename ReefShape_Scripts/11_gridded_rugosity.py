@@ -345,118 +345,108 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     areas_internal = 0.5 * np.linalg.norm(np.cross(e1, e2), axis=1)  # internal²
     centroids_internal = (v0 + v1 + v2) / 3.0
 
-    # --- 4. Calibrate: two affine fits from the same 50 sample points ---
-    # We project 50 sample vertices through Metashape's own
-    # T_full.mulp + shape_crs.project — APIs that are documented and
-    # universally work — and fit:
-    #   (a) internal → shape  (used to project all face centroids onto
-    #       the output grid, fast and vectorized)
-    #   (b) world    → shape  (used only to extract shape-units-per-meter,
-    #       which gives us the correct cell size on the ground)
-    # The ratio of (a)'s row magnitude over (b)'s row magnitude is
-    # meters_per_internal — the scale conversion that turns areas_internal
-    # into real m². Three derived quantities, one set of probes, no
-    # T_np matrix to get wrong.
+    # --- 4. Calibrate: meters-per-internal + shape-per-meter + Jacobian ---
     #
-    # Calibration points are centered before lstsq because ECEF
-    # coordinates are ~6.4×10⁶ m magnitude; without centering, lstsq
-    # loses precision in the small in-plot offsets we actually care about.
-    _step("Calibrating internal → world → shape projections…", 0.62)
-    rng = np.random.RandomState(42)
-    n_calib = min(50, n_verts)
-    calib_idx = rng.choice(n_verts, n_calib, replace=False)
-    calib_internal = vert_internal[calib_idx]
-    calib_world = np.empty((n_calib, 3), dtype=np.float64)
-    calib_shape = np.empty((n_calib, 2), dtype=np.float64)
-    for i in range(n_calib):
-        v_int = Metashape.Vector([float(calib_internal[i, 0]),
-                                  float(calib_internal[i, 1]),
-                                  float(calib_internal[i, 2])])
-        v_w = T_full.mulp(v_int)
-        calib_world[i] = (v_w.x, v_w.y, v_w.z)
-        s = shape_crs.project(v_w)
-        calib_shape[i] = (s.x, s.y)
-
-    # Center every frame for numerical stability of lstsq.
-    int_center = calib_internal[:, :2].mean(axis=0)
-    world_center = calib_world[:, :2].mean(axis=0)
-    shape_center = calib_shape.mean(axis=0)
-    calib_int_c = calib_internal[:, :2] - int_center
-    calib_world_c = calib_world[:, :2] - world_center
-    calib_shape_c = calib_shape - shape_center
-
-    # (a) internal → shape: applied to all face centroids below.
-    M_int_to_shape, *_ = np.linalg.lstsq(calib_int_c, calib_shape_c, rcond=None)
-    # (b) world → shape: used only for shape-units-per-meter.
-    M_world_to_shape, *_ = np.linalg.lstsq(calib_world_c, calib_shape_c, rcond=None)
-
-    # Row i of an affine M is the shape-space vector produced by a 1-unit
-    # step along axis i of the input frame, so |row i| = shape units per
-    # unit of that frame.
-    shape_per_internal = 0.5 * (
-        math.hypot(M_int_to_shape[0, 0], M_int_to_shape[0, 1])
-        + math.hypot(M_int_to_shape[1, 0], M_int_to_shape[1, 1])
-    )
-
-    # shape-per-horizontal-meter calculation.
+    # PRIOR APPROACH (now removed): two 2D-input lstsq affine fits over 50
+    # random calibration vertices, used for both unit conversion and
+    # centroid projection. Two problems with that:
     #
-    # NAIVE APPROACH (what we did first): use the same row-magnitude trick
-    # on the world→shape affine. This works perfectly for projected and
-    # local-meter CRSes — chunk.crs's XY plane is the local horizontal,
-    # so a 1m step in ECEF X is a 1m horizontal step. For GEOGRAPHIC
-    # CRSes (WGS84+EGM96), it's wrong: world coords are ECEF
-    # (geocentric), and the ECEF X/Y axes are tilted relative to local
-    # horizontal at any non-equatorial latitude. A "1 m step in ECEF X"
-    # has a vertical component, so the 2D affine (which only sees the
-    # ECEF XY projection) treats less than 1 m of horizontal motion as a
-    # full meter — overestimating shape-per-meter by 1/cos(...something
-    # like the angle between ECEF X and local horizontal). We observed
-    # 1.85× error at 25°N latitude.
+    #   1. The 2D affine ignores internal_z. For a tilted reef plot,
+    #      internal_z correlates with internal_xy, and the ECEF→geographic
+    #      projection's z-dependent variation gets absorbed into the
+    #      xy-slope of the fit — biasing shape_per_internal up by ~1.5×.
+    #      That alone inflated triangle areas by ~2.27× (the squared
+    #      scale factor) and the centroid projection by ~1.5× per axis,
+    #      so cells scooped up faces from ~2.27× more physical area than
+    #      they should. Combined: ~5× over-stated rugosity.
+    #   2. The fit's sensitivity to the random vertex sample made the
+    #      result non-deterministic between runs, breaking cross-timepoint
+    #      pixel alignment.
     #
-    # CORRECT APPROACH: chunk.crs.localframe(point) returns a Metashape
-    # matrix that maps local east-north-up offsets at the given point to
-    # ECEF. Probe a 1m east step and a 1m north step in that frame and
-    # measure the shape-CRS distance directly. For projected/local CRSes
-    # this gives identical results to the naive approach (localframe is
-    # ~identity); for geographic it gives the correct degrees-per-meter
-    # at the plot's exact latitude. Falls back to the affine slope if
-    # localframe isn't exposed (older Metashape versions).
-    # Reference point for the localframe probe is the boundary's centroid
-    # in shape CRS, unprojected to ECEF. Using a boundary-derived point
-    # (not a mesh-derived one) is what makes shape_per_meter — and
-    # therefore cell_size_units — identical between two timepoints sharing
-    # the same boundary polygon. Drift from a mesh-derived reference is
-    # too small to matter for the math (sub-mm per meter on a reef plot),
-    # but it's enough to nudge floor() snap decisions and offset the grid
-    # by entire cells when multiplied by the ~1e7 scale of lat/long
-    # coordinates over the CRS origin.
-    bx_center = 0.5 * (bx_min + bx_max)
-    by_center = 0.5 * (by_min + by_max)
+    # CURRENT APPROACH (three separate, correct calculations):
+    #
+    #   - meters_per_internal: chunk.transform.scale directly. Metashape's
+    #     own mesh.area() and polygon.area() use this same scale, so our
+    #     per-cell rugosity is numerically consistent with what users get
+    #     from those tools (which is how they validate output). We
+    #     additionally probe T_full's per-axis scale and warn if they
+    #     disagree — exposes anomalies like non-uniform-scale chunk
+    #     transforms or surprising model.transform contributions.
+    #
+    #   - shape_per_meter: localframe probe at the boundary centroid (see
+    #     "shape-per-horizontal-meter calculation" comment below). Already
+    #     correct from the earlier fix; just reorganized.
+    #
+    #   - centroid projection: 3×2 Jacobian J via finite-difference
+    #     probes of T_full + shape_crs.project at a reference internal
+    #     point. Captures the *full* dependency including internal_z, so
+    #     the projection of each face's centroid to shape coords matches
+    #     what T_full.mulp + shape_crs.project would give (within the
+    #     linearity of the projection over typical reef-plot extents).
+    #
+    _step("Calibrating transform…", 0.62)
+
+    # ---- meters_per_internal ----
+    try:
+        ts_reported = float(chunk.transform.scale)
+    except Exception:
+        ts_reported = None
+
+    # Probe T_full's per-axis scale so any axis-non-uniform behavior or
+    # model.transform contribution shows up in the console rather than
+    # silently corrupting areas.
+    probe_origin = T_full.mulp(Metashape.Vector([0.0, 0.0, 0.0]))
+    probe_axes = []
+    for axis in range(3):
+        unit = [0.0, 0.0, 0.0]
+        unit[axis] = 1.0
+        probe_w = T_full.mulp(Metashape.Vector(unit))
+        probe_axes.append((probe_w - probe_origin).norm())
+    print("  T_full axis scales: x={:.4g} y={:.4g} z={:.4g}".format(*probe_axes))
+
+    if ts_reported is not None and ts_reported > 0:
+        meters_per_internal = ts_reported
+        # Warn if T_full's per-axis probe disagrees with chunk.transform.scale
+        # by >1% — could indicate non-uniform scale or a model.transform
+        # contribution that mesh.area() doesn't account for.
+        probe_mean = sum(probe_axes) / 3.0
+        if abs(probe_mean - ts_reported) / ts_reported > 0.01:
+            print("  WARNING: chunk.transform.scale ({:.4g}) differs from "
+                  "T_full axis-probe mean ({:.4g}) by >1%. Per-cell areas "
+                  "will use chunk.transform.scale to match Metashape's "
+                  "mesh.area(), but you may see rugosity differ from manual "
+                  "checks done with composed-transform tools.".format(
+                      ts_reported, probe_mean))
+    else:
+        meters_per_internal = sum(probe_axes) / 3.0
+    print("  meters/internal: {:.6g}".format(meters_per_internal))
+
+    # ---- shape_per_meter (localframe at boundary centroid) ----
+    # chunk.crs.localframe(p) returns the matrix that converts ECEF →
+    # local east-north-up at p ("matrix to local LSE" per the docs). We
+    # want the OPPOSITE direction (LSE → ECEF) so that feeding a (1, 0, 0)
+    # "1 m east in LSE" probe gives us the ECEF coordinates of the point
+    # 1 m east of ref — invert the matrix.
+    #
+    # The reference point is the boundary's bbox centroid in shape CRS,
+    # unprojected to ECEF. Boundary-derived (not mesh-derived) so two
+    # timepoints sharing the same boundary get identical shape_per_meter,
+    # which keeps the grid pixel-aligned across timepoints.
+    bx_center_shape = 0.5 * (bx_min + bx_max)
+    by_center_shape = 0.5 * (by_min + by_max)
     ref_shape_for_probe = Metashape.Vector(
-        [float(bx_center), float(by_center), float(boundary_z)])
+        [float(bx_center_shape), float(by_center_shape), float(boundary_z)])
     try:
         ref_world_vec = shape_crs.unproject(ref_shape_for_probe)
     except Exception:
-        # Fallback: use mesh-vertex mean (the older, slightly drift-prone
-        # behavior). Worse for cross-timepoint alignment but at least the
-        # localframe call still has a sensible ECEF input.
-        ref_world_np = calib_world[:, :3].mean(axis=0)
-        ref_world_vec = Metashape.Vector(
-            [float(ref_world_np[0]), float(ref_world_np[1]),
-             float(ref_world_np[2])])
+        # Fall back to the centroid of the chunk transform's translation
+        # (any in-mesh world point would work — localframe just needs to
+        # be at a sensible ECEF location).
+        ref_world_vec = probe_origin
 
     shape_per_meter = None
     spm_method = ""
     try:
-        # chunk.crs.localframe(p) returns the matrix that converts ECEF →
-        # local east-north-up at p ("matrix to local LSE" per the docs).
-        # We want the OPPOSITE direction (LSE → ECEF) so that feeding a
-        # (1, 0, 0) "1 m east in LSE" probe gives us the ECEF coordinates
-        # of the point 1 m east of ref. So we invert the returned matrix.
-        # Applying the un-inverted matrix to (1, 0, 0) instead returns the
-        # LSE coords of the ECEF point at (1, 0, 0) — near Earth's center,
-        # ~6 400 km from any reef plot — which projects to wildly wrong
-        # shape distances (we observed 203 degrees per "meter").
         local_to_ecef = chunk.crs.localframe(ref_world_vec).inv()
         ref_shape = shape_crs.project(ref_world_vec)
         east_world = local_to_ecef.mulp(Metashape.Vector([1.0, 0.0, 0.0]))
@@ -471,43 +461,46 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
         spm_method = "localframe probe"
     except Exception as e:
         print("  note: chunk.crs.localframe failed ({}); "
-              "falling back to world→shape affine slope".format(e))
-
-    if shape_per_meter is None or shape_per_meter <= 0:
-        shape_per_meter = 0.5 * (
-            math.hypot(M_world_to_shape[0, 0], M_world_to_shape[0, 1])
-            + math.hypot(M_world_to_shape[1, 0], M_world_to_shape[1, 1])
-        )
-        spm_method = "world→shape affine slope (no localframe)"
-
-    # meters per internal unit = (shape/internal) / (shape/meter)
-    meters_per_internal = shape_per_internal / shape_per_meter
-
-    # Cross-check against chunk.transform.scale (Metashape's own reported
-    # value). They should agree closely; if they don't, something in the
-    # transform chain is unusual and the printed warning helps diagnose.
-    try:
-        ts_reported = float(chunk.transform.scale)
-    except Exception:
-        ts_reported = None
-    if ts_reported is not None:
-        print("  meters/internal: {:.6g}  (chunk.transform.scale: {:.6g})".format(
-            meters_per_internal, ts_reported))
-    else:
-        print("  meters/internal: {:.6g}".format(meters_per_internal))
+              "falling back to assuming shape units == meters".format(e))
+        shape_per_meter = 1.0
+        spm_method = "assumed (localframe unavailable)"
     print("  shape-CRS units per meter: {:.6g}  ({})".format(
         shape_per_meter, spm_method))
 
-    # Convert areas to m² using the empirical scale.
+    # ---- Convert internal areas to m² ----
     areas_3d = areas_internal * (meters_per_internal ** 2)
 
+    # ---- Cell size in shape-CRS units ----
     cell_size_units = cell_size_m * shape_per_meter
     print("  cell size: {:.6g} shape-CRS units ({} m on the ground)".format(
         cell_size_units, cell_size_m))
 
-    # Project all centroids → shape XY using the internal→shape affine.
-    centroids_int_c = centroids_internal[:, :2] - int_center
-    centroids_shape = (centroids_int_c @ M_int_to_shape) + shape_center
+    # ---- 3D-input Jacobian for centroid → shape projection ----
+    # J[axis, k] = ∂shape_k / ∂internal_axis at the reference point.
+    # Probed via finite differences through the actual T_full +
+    # shape_crs.project pipeline, so it picks up the full ECEF→geographic
+    # nonlinearity correctly (including the internal_z dependency that
+    # the old 2D lstsq fit was incorrectly absorbing into the xy slopes).
+    _step("Computing centroid projection Jacobian…", 0.65)
+    ref_int_3d = centroids_internal.mean(axis=0)
+    ref_world = T_full.mulp(Metashape.Vector(
+        [float(ref_int_3d[0]), float(ref_int_3d[1]), float(ref_int_3d[2])]))
+    ref_shape_proj = shape_crs.project(ref_world)
+    ref_shape_xy = np.array([float(ref_shape_proj.x), float(ref_shape_proj.y)])
+    J = np.zeros((3, 2), dtype=np.float64)
+    EPS = 1.0  # 1 internal unit per probe — well within the linear regime
+    for axis in range(3):
+        perturbed = ref_int_3d.copy()
+        perturbed[axis] += EPS
+        p_world = T_full.mulp(Metashape.Vector(
+            [float(perturbed[0]), float(perturbed[1]), float(perturbed[2])]))
+        p_shape = shape_crs.project(p_world)
+        J[axis, 0] = (p_shape.x - ref_shape_proj.x) / EPS
+        J[axis, 1] = (p_shape.y - ref_shape_proj.y) / EPS
+
+    # Project all face centroids: shape = ref_shape + (centroid - ref) @ J
+    delta_int = centroids_internal - ref_int_3d  # (n_faces, 3)
+    centroids_shape = ref_shape_xy + delta_int @ J  # (n_faces, 2)
 
     # --- 5. Build grid anchored to the boundary's own bounding box ---
     # Grid origin = boundary's (min_x, max_y) corner. This guarantees that
