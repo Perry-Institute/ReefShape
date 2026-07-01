@@ -366,18 +366,60 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
             #
             # Instead: leave the dialog fully alive (exec() runs, Meta-
             # shape's task completes normally, Metashape closes it
-            # itself), but make it invisible in place. Opacity 0 hides
-            # the paint; moving offscreen prevents any mouse interaction
-            # or flicker during the transparent-to-opaque transition on
-            # some window managers.
+            # itself), but make it invisible in place AND non-blocking
+            # for focus:
+            #   1. opacity 0            → no visible paint
+            #   2. non-modal            → doesn't grab exclusive input
+            #   3. move offscreen       → no mouse hit; use -8000 so
+            #                             Windows doesn't clamp the
+            #                             DPI-scaled coordinate to
+            #                             -32768 (which emits a Qt
+            #                             geometry warning per Show).
+            #   4. refocus our own dlg  → Windows still tries to hand
+            #                             focus to the newest top-level
+            #                             window on Show, so we forcibly
+            #                             re-raise the Rugosity dialog.
             try:
                 obj.setWindowOpacity(0.0)
             except Exception:
                 pass
             try:
-                obj.move(-32000, -32000)
+                obj.setModal(False)
+                obj.setWindowModality(QtCore.Qt.NonModal)
             except Exception:
                 pass
+            try:
+                obj.move(-8000, -8000)
+            except Exception:
+                pass
+            self._refocusOwnDialog()
+        except Exception:
+            # An event filter must never raise — Qt will terminate the
+            # app. Swallow anything unexpected.
+            pass
+        return False
+
+    def _refocusOwnDialog(self):
+        """Find the script's _ProgressDialog among top-level widgets
+        (by title match on 'gridded rugosity') and re-raise it, so
+        Metashape's just-shown invisible popup doesn't hold focus."""
+        try:
+            for w in QtWidgets.QApplication.topLevelWidgets():
+                if not w.isVisible():
+                    continue
+                try:
+                    t = (w.windowTitle() or "").lower()
+                except Exception:
+                    continue
+                if "gridded rugosity" in t:
+                    try:
+                        w.raise_()
+                        w.activateWindow()
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
         except Exception:
             # An event filter must never raise — Qt will terminate the
             # app. Swallow anything unexpected.
