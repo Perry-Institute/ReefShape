@@ -1254,16 +1254,18 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         '''
         Returns True if camera optimization has already been performed on the
         current chunk (manually via the Metashape GUI or by an earlier run of
-        this script). Detection works by checking for 'optimize/' keys in
-        chunk.tie_points.meta — Metashape writes these whenever optimizeCameras
-        runs, so the signal is independent of how optimization was triggered.
+        this script). Detection works by looking for keys prefixed
+        'OptimizeCameras/' in `chunk.meta` — Metashape writes these whenever
+        optimizeCameras() runs, regardless of how it was triggered.
+
+        The confusion-prone bit: this metadata is stored on `chunk.meta`,
+        NOT on `chunk.tie_points.meta` (which only holds MatchPhotos/*).
+        Earlier revisions of this method looked in the wrong dict.
         '''
-        tp = self.chunk.tie_points
-        if not tp:
-            return False
         try:
-            return any(k.startswith('optimize/') for k in tp.meta.keys())
-        except AttributeError:
+            return any(k.startswith('OptimizeCameras/')
+                       for k in self.chunk.meta.keys())
+        except (AttributeError, TypeError):
             return False
 
 
