@@ -1,0 +1,10 @@
+# macOS launchers are run by /bin/bash. If Git checks them out with CRLF the
+# shebang line ends in a carriage return and the shell reports
+# "bad interpreter: /bin/bash^M", so pin them to LF regardless of the
+# checking-out platform's core.autocrlf setting.
+*.command text eol=lf
+*.sh      text eol=lf
+
+# Windows batch files are the mirror image: cmd.exe mishandles LF-only files
+# in some constructs (notably multi-line for/if blocks), so pin them to CRLF.
+*.bat     text eol=crlf
