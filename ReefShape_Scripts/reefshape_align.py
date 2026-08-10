@@ -47,6 +47,20 @@ DAMAGED_ACCURACY = 1.0
 EXPORT_PRECISION = 9
 
 
+def scalebar_marker_labels(chunk):
+    """Labels of every marker forming one end of a scalebar in `chunk`.
+
+    A scalebar endpoint can be a marker or a camera; only markers matter here.
+    """
+    labels = set()
+    for scalebar in chunk.scalebars:
+        for end in (scalebar.point0, scalebar.point1):
+            label = getattr(end, "label", None)
+            if label:
+                labels.add(label)
+    return labels
+
+
 def export_estimated_reference(reference_chunk, path):
     """Write the reference chunk's estimated marker positions to `path`.
 
@@ -79,10 +93,19 @@ def filter_to_enabled_markers(reference_chunk, path):
     off-by-one here would misassign every reference coordinate in the chunk,
     which is a bad thing to leave resting on an assumption.
     """
+    # Scalebar targets are excluded regardless of their reference flag. A
+    # scalebar is repositioned on every visit, so its markers are never in the
+    # same place twice; using one as an alignment reference would pull the new
+    # timepoint toward a position that has genuinely moved. In a
+    # ReefShape-conventional project they are already reference-disabled and
+    # this changes nothing, but a project set up by hand may not be, and the
+    # failure is silent -- a subtly warped mosaic, not an error.
+    scalebar_labels = scalebar_marker_labels(reference_chunk)
+
     enabled = {}
     for marker in reference_chunk.markers:
         try:
-            if marker.reference.enabled:
+            if marker.reference.enabled and marker.label not in scalebar_labels:
                 enabled[marker.label] = marker
         except AttributeError:
             continue

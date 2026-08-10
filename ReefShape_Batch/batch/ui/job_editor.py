@@ -162,6 +162,17 @@ class JobEditor(QtWidgets.QDialog):
         self.ref_detail.setWordWrap(True)
         layout.addWidget(self.ref_detail)
 
+        # What the earlier timepoint was processed at. Shown so the user can
+        # match it before running: a revisit built at a different mesh quality
+        # or orthomosaic resolution produces differences that are partly an
+        # artifact of processing rather than of the reef.
+        self.ref_settings = QtWidgets.QLabel("")
+        self.ref_settings.setTextFormat(QtCore.Qt.RichText)
+        self.ref_settings.setWordWrap(True)
+        self.ref_settings.setStyleSheet(
+            "border: 1px solid palette(mid); border-radius: 3px; padding: 6px;")
+        layout.addWidget(self.ref_settings)
+
         layout.addWidget(QtWidgets.QLabel(
             "Damaged or moved markers (tick any target that shifted between "
             "visits -- they are kept but not trusted for alignment):"))
@@ -172,6 +183,24 @@ class JobEditor(QtWidgets.QDialog):
         layout.addWidget(self.markers_list)
 
     def _build_georef_section(self):
+        # A revisit takes its georeferencing wholesale from the reference
+        # chunk -- markers, scale and coordinate system all come across in the
+        # alignment step. There is nothing here for the user to supply, and
+        # offering the controls anyway would invite them to set something that
+        # is then ignored.
+        if self.job.kind == REPHOTO:
+            self.georef_box = None
+            self.georef_check = None
+            self._georef_dependents = []
+            note = QtWidgets.QLabel(
+                "<b>Georeferencing</b><br>Taken from the reference chunk: its "
+                "marker positions, scale and coordinate system are copied to "
+                "this timepoint during alignment. Nothing to set here.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: palette(mid); padding: 4px 0;")
+            self.form.addWidget(note)
+            return
+
         layout = self._section("Georeferencing")
 
         self.georef_check = QtWidgets.QCheckBox(
@@ -213,8 +242,18 @@ class JobEditor(QtWidgets.QDialog):
     def _build_processing_section(self):
         layout = self._section("Processing")
 
-        self.crs_picker = CRSPicker()
-        layout.addWidget(self.crs_picker)
+        # A revisit must be in the reference chunk's coordinate system --
+        # anything else and the two timepoints do not overlay. So it is
+        # reported, not offered.
+        if self.job.kind == REPHOTO:
+            self.crs_picker = None
+            self.crs_note = QtWidgets.QLabel("Select a reference chunk above.")
+            self.crs_note.setWordWrap(True)
+            layout.addWidget(self.crs_note)
+        else:
+            self.crs_picker = CRSPicker()
+            self.crs_note = None
+            layout.addWidget(self.crs_picker)
 
         row = QtWidgets.QHBoxLayout()
         mesh_label = QtWidgets.QLabel("Mesh quality:")
@@ -278,16 +317,19 @@ class JobEditor(QtWidgets.QDialog):
         self.photos_row.setPath(job.photo_folders[0] if job.photo_folders else "")
         self.chunk_edit.setText(job.chunk_name)
 
-        self.georef_check.setChecked(job.georef.enabled)
-        index = next((i for i, (_n, v) in enumerate(models.TARGET_TYPES)
-                      if v == job.georef.target_type), 0)
-        self.target_combo.setCurrentIndex(index)
-        self.scalebar_row.setPath(job.georef.scalebar_path)
-        self.georef_file_row.setPath(job.georef.georef_path)
-        self.columns_widget.setValues(job.georef)
-        self.corners_widget.setValues(job.georef.corner_markers)
+        if self.georef_check is not None:
+            self.georef_check.setChecked(job.georef.enabled)
+            index = next((i for i, (_n, v) in enumerate(models.TARGET_TYPES)
+                          if v == job.georef.target_type), 0)
+            self.target_combo.setCurrentIndex(index)
+            self.scalebar_row.setPath(job.georef.scalebar_path)
+            self.georef_file_row.setPath(job.georef.georef_path)
+            self.columns_widget.setValues(job.georef)
+            self.corners_widget.setValues(job.georef.corner_markers)
 
-        self.crs_picker.setWkt(job.processing.crs_wkt, job.processing.crs_label)
+        if self.crs_picker is not None:
+            self.crs_picker.setWkt(job.processing.crs_wkt,
+                                   job.processing.crs_label)
         self.mesh_combo.setCurrentIndex(
             max(0, [n for n, _ in models.MESH_QUALITIES].index(
                 job.processing.mesh_quality)
@@ -304,11 +346,28 @@ class JobEditor(QtWidgets.QDialog):
         self.gis_check.setChecked(job.export.gis_outputs)
         self.taglab_check.setChecked(job.export.taglab_outputs)
 
-        self._on_georef_toggled(job.georef.enabled)
+        if self.georef_check is not None:
+            self._on_georef_toggled(job.georef.enabled)
+        else:
+            # A revisit gets its markers, scale and CRS from the reference
+            # chunk during alignment, so the workflow must not try to detect
+            # and reference them again.
+            job.georef.enabled = False
         self._on_photos_changed()
 
         for widget in (self.label_edit, self.chunk_edit):
             widget.textChanged.connect(lambda _t: self._revalidate())
+
+        # Keep the reference comparison honest as the user changes settings,
+        # otherwise it would show a tick against a value they have since
+        # changed away from.
+        if self.job.kind == REPHOTO:
+            self.mesh_combo.currentIndexChanged.connect(
+                lambda _i: self._refresh_reference_settings())
+            self.res_spin.valueChanged.connect(
+                lambda _v: self._refresh_reference_settings())
+            self.default_res_check.toggled.connect(
+                lambda _c: self._refresh_reference_settings())
 
         if self.job.kind == REPHOTO and job.project_path:
             self._probe()
@@ -321,17 +380,25 @@ class JobEditor(QtWidgets.QDialog):
         job.photo_folders = [self.photos_row.path()] if self.photos_row.path() else []
         job.chunk_name = self.chunk_edit.text().strip()
 
-        job.georef.enabled = self.georef_check.isChecked()
-        job.georef.target_type = models.TARGET_TYPES[
-            self.target_combo.currentIndex()][1]
-        job.georef.scalebar_path = self.scalebar_row.path()
-        job.georef.georef_path = self.georef_file_row.path()
-        for name, value in self.columns_widget.values().items():
-            setattr(job.georef, name, value)
-        job.georef.corner_markers = self.corners_widget.values()
+        if self.georef_check is not None:
+            job.georef.enabled = self.georef_check.isChecked()
+            job.georef.target_type = models.TARGET_TYPES[
+                self.target_combo.currentIndex()][1]
+            job.georef.scalebar_path = self.scalebar_row.path()
+            job.georef.georef_path = self.georef_file_row.path()
+            for name, value in self.columns_widget.values().items():
+                setattr(job.georef, name, value)
+            job.georef.corner_markers = self.corners_widget.values()
+        else:
+            # Revisit: alignment supplies the referencing, so the workflow's
+            # own detect-and-reference pass must stay off. The target type is
+            # still needed -- marker detection runs on the new photos to find
+            # the targets the reference positions are matched onto.
+            job.georef.enabled = False
 
-        job.processing.crs_wkt = self.crs_picker.wkt()
-        job.processing.crs_label = self.crs_picker.label()
+        if self.crs_picker is not None:
+            job.processing.crs_wkt = self.crs_picker.wkt()
+            job.processing.crs_label = self.crs_picker.label()
         job.processing.mesh_quality = self.mesh_combo.currentText()
         job.processing.generic_preselection = self.preselect_check.isChecked()
         job.processing.vertex_colors = self.colors_check.isChecked()
@@ -395,8 +462,19 @@ class JobEditor(QtWidgets.QDialog):
                 else "  -- note: this chunk has no orthomosaic, so it may not "
                      "be fully processed"))
 
+        self._adopt_reference_crs(chunk)
+        self._show_reference_settings(chunk)
+
+        # Scalebar targets are left out entirely. A scalebar is repositioned
+        # on every visit, so its markers are never in the same place twice;
+        # they play no part in alignment, and listing them as candidates for
+        # "did this move?" invites a pointless decision whose answer is always
+        # yes.
         previously = set(self.job.damaged_markers or [])
+        listed = 0
         for marker in chunk.get("markers", []):
+            if marker.get("in_scalebar"):
+                continue
             item = QtWidgets.QListWidgetItem(marker.get("label", ""))
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
             item.setCheckState(QtCore.Qt.Checked
@@ -406,7 +484,104 @@ class JobEditor(QtWidgets.QDialog):
                 item.setToolTip("Not enabled for referencing in this chunk, "
                                 "so it will not be used for alignment anyway.")
             self.markers_list.addItem(item)
+            listed += 1
+
+        hidden = len(chunk.get("scalebar_markers", []))
+        if not listed:
+            item = QtWidgets.QListWidgetItem(
+                "No alignment markers in this chunk")
+            item.setFlags(QtCore.Qt.NoItemFlags)
+            self.markers_list.addItem(item)
+        self.markers_list.setToolTip(
+            "{} scalebar target(s) are not listed: scalebars are moved between "
+            "visits, so they are never used to align timepoints."
+            .format(hidden) if hidden else "")
         self._revalidate()
+
+    def _refresh_reference_settings(self):
+        """Redraw the reference comparison after a settings change."""
+        if not self._project_info:
+            return
+        chunk = self._project_info.chunk(self.ref_combo.currentText())
+        if chunk:
+            self._show_reference_settings(chunk)
+
+    def _adopt_reference_crs(self, chunk):
+        """Take the coordinate system from the reference chunk.
+
+        Not a choice: a revisit that is not in the earlier timepoint's
+        coordinate system will not overlay it, which defeats the point. So the
+        CRS is reported rather than offered, and copied into the job.
+        """
+        if self.crs_note is None:
+            return
+        wkt = chunk.get("crs_wkt")
+        name = chunk.get("crs_name") or "unknown"
+        if wkt:
+            self.job.processing.crs_wkt = wkt
+            self.job.processing.crs_label = name
+            self.crs_note.setText(
+                "<span style='color:#1a7f37;'>&#10003; Reference chunk is in "
+                "<b>{}</b> coordinates. This timepoint will use the same "
+                "system.</span>".format(name))
+        else:
+            self.crs_note.setText(
+                "<span style='color:#b8860b;'>The reference chunk has no "
+                "coordinate system set. Alignment will still work, but the "
+                "result will not be georeferenced.</span>")
+
+    def _show_reference_settings(self, chunk):
+        """Show how the earlier timepoint was processed, and flag mismatches.
+
+        Comparing two timepoints only means something if they were built the
+        same way, so the settings that affect the comparison are put in front
+        of the user before they run, with anything that differs called out.
+        """
+        ref_quality = chunk.get("mesh_quality")
+        ref_res = chunk.get("orthomosaic_resolution")
+        rows = []
+
+        chosen_quality = self.mesh_combo.currentText()
+        if ref_quality:
+            match = (ref_quality == chosen_quality)
+            rows.append(self._compare_row(
+                "Mesh quality", ref_quality, chosen_quality, match))
+        else:
+            rows.append("<tr><td>Mesh quality</td><td colspan='2'>"
+                        "<i>not recorded (chunk has no mesh)</i></td></tr>")
+
+        if ref_res:
+            chosen_res = (0.0 if self.default_res_check.isChecked()
+                          else self.res_spin.value())
+            chosen_text = ("chosen by Metashape"
+                           if self.default_res_check.isChecked()
+                           else "{:.5f} m".format(chosen_res))
+            # Metashape stores resolution as a float carrying accumulated
+            # rounding (0.0005000000000033308), so compare with a tolerance
+            # rather than for equality.
+            match = (not self.default_res_check.isChecked()
+                     and abs(chosen_res - ref_res) < 1e-9)
+            rows.append(self._compare_row(
+                "Orthomosaic resolution", "{:.5f} m".format(ref_res),
+                chosen_text, match))
+        else:
+            rows.append("<tr><td>Orthomosaic resolution</td><td colspan='2'>"
+                        "<i>not recorded (chunk has no orthomosaic)</i>"
+                        "</td></tr>")
+
+        self.ref_settings.setText(
+            "<b>Reference timepoint was processed at</b>"
+            "<table cellspacing='0' cellpadding='3' width='100%'>"
+            "<tr><td></td><td><b>Reference</b></td><td><b>This job</b></td></tr>"
+            "{}</table>".format("".join(rows)))
+
+    @staticmethod
+    def _compare_row(name, reference_value, chosen_value, match):
+        colour = "#1a7f37" if match else "#b8860b"
+        mark = "&#10003;" if match else "&#9888;"
+        return ("<tr><td>{}</td><td>{}</td>"
+                "<td style='color:{};'>{} {}</td></tr>".format(
+                    name, reference_value, colour, mark, chosen_value))
 
     def _probe(self, force=False):
         """Read the project's chunks and markers via a headless Metashape."""

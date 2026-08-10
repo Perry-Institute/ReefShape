@@ -43,16 +43,22 @@ def _safe(fn, default=None):
         return default
 
 
-def describe_marker(marker):
+def describe_marker(marker, scalebar_labels=()):
     """One marker, from the perspective of configuring an alignment.
 
     `reference_enabled` is what decides whether a marker contributes to the
     chunk transform, and it is the flag Align Timepoints filters the exported
     reference file on -- so the GUI needs it to explain why a marker might not
     be usable as a reference point.
+
+    `in_scalebar` marks a marker that forms one end of a scalebar. Scalebars
+    are repositioned on every visit, so those targets are never in the same
+    place twice and are useless as alignment references -- the GUI hides them
+    rather than inviting the user to reason about them.
     """
+    label = _safe(lambda: marker.label, "")
     return {
-        "label": _safe(lambda: marker.label, ""),
+        "label": label,
         "key": _safe(lambda: marker.key),
         "enabled": _safe(lambda: bool(marker.enabled), True),
         "reference_enabled": _safe(
@@ -60,7 +66,54 @@ def describe_marker(marker):
         "has_position": _safe(lambda: marker.position is not None, False),
         "has_reference_location": _safe(
             lambda: marker.reference.location is not None, False),
+        "in_scalebar": label in scalebar_labels,
     }
+
+
+def scalebar_marker_labels(chunk):
+    """Labels of every marker that forms one end of a scalebar.
+
+    A scalebar's endpoints can be markers or cameras; only markers have a
+    label worth reporting, so anything else is skipped.
+    """
+    labels = set()
+    for scalebar in _safe(lambda: list(chunk.scalebars), []) or []:
+        for end in (_safe(lambda: scalebar.point0), _safe(lambda: scalebar.point1)):
+            label = _safe(lambda: end.label) if end is not None else None
+            if label:
+                labels.add(label)
+    return labels
+
+
+# Depth-map downscale -> the quality name the UI shows. Mirrors
+# batch/models.MESH_QUALITIES.
+_DOWNSCALE_NAMES = {1: "Ultra High", 2: "High", 4: "Medium",
+                    8: "Low", 16: "Lowest"}
+
+
+def describe_mesh_quality(chunk):
+    """The downscale a chunk's mesh was built at, and its quality name.
+
+    Recorded by Metashape as `BuildDepthMaps/downscale` on the *model*, not on
+    the chunk -- the depth maps themselves are usually cleared by the
+    workflow's cleanup step, so reading it from `chunk.depth_maps` would find
+    nothing on any finished project.
+
+    Matters for re-photography: a revisit processed at a different mesh
+    quality than the timepoint it is being compared against gives a
+    difference that is partly an artifact of processing rather than of the
+    reef.
+    """
+    downscale = None
+    model = _safe(lambda: chunk.model)
+    if model is not None:
+        raw = _safe(lambda: model.meta["BuildDepthMaps/downscale"])
+        if raw is not None:
+            try:
+                downscale = int(raw)
+            except (TypeError, ValueError):
+                downscale = None
+    return downscale, _DOWNSCALE_NAMES.get(downscale)
 
 
 def describe_chunk(chunk):
@@ -71,7 +124,11 @@ def describe_chunk(chunk):
     on), which is what makes them meaningful in the GUI: they predict exactly
     which stages a re-run would actually perform.
     """
-    markers = _safe(lambda: [describe_marker(m) for m in chunk.markers], []) or []
+    scalebar_labels = scalebar_marker_labels(chunk)
+    markers = _safe(
+        lambda: [describe_marker(m, scalebar_labels) for m in chunk.markers],
+        []) or []
+    downscale, quality_name = describe_mesh_quality(chunk)
 
     has_outer_boundary = False
     shapes = _safe(lambda: chunk.shapes)
@@ -93,6 +150,12 @@ def describe_chunk(chunk):
         "n_markers": len(markers),
         "n_scalebars": _safe(lambda: len(chunk.scalebars), 0),
         "markers": markers,
+        "scalebar_markers": sorted(scalebar_labels),
+
+        # Processing settings a revisit should match. See
+        # describe_mesh_quality.
+        "depth_map_downscale": downscale,
+        "mesh_quality": quality_name,
 
         "crs_name": _safe(lambda: chunk.crs.name if chunk.crs else None),
         "crs_wkt": _safe(lambda: chunk.crs.wkt if chunk.crs else None),
