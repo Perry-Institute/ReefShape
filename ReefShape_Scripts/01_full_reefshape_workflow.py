@@ -11,6 +11,7 @@ These were assembled into this full workflow and UI by Sam Marshall
 Subsequent updates have been made by Will Greene
 """
 import Metashape
+import os
 from os import path
 import sys
 import csv
@@ -20,6 +21,8 @@ import re
 from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets
 from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
+import reefshape_core
+from reefshape_core import WorkflowSettings, WorkflowError
 
 
 # Sentinel value used as a dropdown entry that, when selected, opens
@@ -37,6 +40,43 @@ def show_error_dialog(title, exception):
     msg_box.setInformativeText(str(exception))
     msg_box.exec_()
     
+
+class DialogReporter(reefshape_core.Reporter):
+    """
+    Routes reefshape_core's progress and warnings into the Metashape GUI.
+
+    Only two hooks need overriding. info()/warn() keep printing to the console,
+    which is where users of the menu script already watch progress, while
+    confirm_uncropped_taglab() restores the one genuinely interactive decision
+    in the workflow. Everything else the dialog used to announce mid-run is
+    now returned in the WorkflowResult and reported once, at the end.
+    """
+
+    def __init__(self, dialog):
+        self.dialog = dialog
+
+    def step(self, name, index=None, total=None):
+        super().step(name, index, total)
+        # Keep the dialog painting during long stages; without this the window
+        # goes unresponsive-grey on Windows for the whole of a mesh build.
+        QtWidgets.QApplication.processEvents()
+
+    def confirm_uncropped_taglab(self, settings):
+        reply = QtWidgets.QMessageBox.question(
+            self.dialog,
+            "No boundary polygon",
+            "No OuterBoundary polygon exists in this chunk, so the TagLab "
+            "outputs cannot be clipped to the plot.\n\n"
+            "Yes - continue and export uncropped TagLab products.\n"
+            "No  - stop here and return to the dialog so you can uncheck "
+            "TagLab outputs and re-run, or close the dialog to create a "
+            "boundary manually (see scripts 06 or 08) before re-running.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        return reply == QtWidgets.QMessageBox.Yes
+
+
 class FullWorkflowDlg(QtWidgets.QDialog):
 
     def __init__(self, parent):
@@ -61,9 +101,13 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             "WGS84 + EGM96": Metashape.CoordinateSystem('COMPD_CS["WGS 84 + EGM96 height",GEOGCS["WGS 84",DATUM["World Geodetic System 1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9102"]],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 height",VERT_DATUM["EGM96 geoid",2005,AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","5773"]]]'),
             "Local Coordinates": Metashape.CoordinateSystem('LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]')
         }
-        self.autoDetectMarkers = False
-        # set default corner marker arrangement
-        self.corner_markers = [1, 2, 3, 4]
+        # NOTE: georeferencing state (whether to auto-detect markers, and the
+        # corner marker arrangement) lives on self.georef_groupbox, which is
+        # where the widgets that drive it are. This class used to carry its
+        # own self.autoDetectMarkers and self.corner_markers as well; they
+        # were never kept in sync with the groupbox, and the stale
+        # autoDetectMarkers made the "exit for manual referencing" check read
+        # as though it consulted the user's choice when it did not.
 
         # initialize main dialog window
         QtWidgets.QDialog.__init__(self, parent)
@@ -682,414 +726,98 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def _runWorkFlowImpl(self):
         '''
-        Contains the main workflow structure
+        Gather settings from the dialog, then hand the actual processing to
+        reefshape_core. That module is shared with the headless batch runner,
+        so a change to the pipeline reaches both front ends at once instead of
+        having to be made twice and inevitably diverging.
         '''
         print("Script started...")
         self.setEnabled(False)
         self.chunk = Metashape.app.document.chunk
-        
-        # Skip the "More…" sentinel if somehow it's the active item (defensive
-        # — the slot reverts off it). When skipping, leave chunk.crs alone.
-        selected_crs_label = self.comboCRS.currentText()
-        if selected_crs_label in self.crs_options:
-            self.chunk.crs = self.crs_options[selected_crs_label]
-        ###### 0. Setting Parameters ######
-        if(not self.georef_groupbox.autoDetectMarkers and self.chunk.model == None):
-            Metashape.app.messageBox("You have initiated the script without specifying georeferencing information. If you ran the align timepoints script first, "
-                                    "clicking OK will simply complete the workflow in its entirety for you (no further action needed). \n\n If this is a new project "
-                                    "without auto-detectable markers, the script will exit after creating a mesh to allow for manual referencing, leveling, "
-                                    "and scaling. \n\n Once this information is added, run the script again to complete the remainder of the workflow.")
 
-        # set constants
-        ALIGN_QUALITY = 1 # quality setting for camera alignment; corresponds to high accuracy in GUI
-        DM_QUALITY = 2 ** self.comboMeshQuality.currentIndex() # quality setting for depth maps; corresponds to medium in GUI
-        INTERPOLATION = Metashape.DisabledInterpolation # interpolation setting for DEM creation
+        settings = self.buildWorkflowSettings()
 
-        # set arguments from dialog box
+        if not settings.georef_enabled and self.chunk.model is None:
+            Metashape.app.messageBox(
+                "You have initiated the script without specifying georeferencing information. "
+                "If you ran the align timepoints script first, clicking OK will simply complete "
+                "the workflow in its entirety for you (no further action needed). \n\n If this "
+                "is a new project without auto-detectable markers, the script will exit after "
+                "creating a mesh to allow for manual referencing, leveling, and scaling. \n\n "
+                "Once this information is added, run the script again to complete the remainder "
+                "of the workflow.")
+
         try:
-            if(self.georef_groupbox.autoDetectMarkers):
-                scalebars_path = self.georef_groupbox.scalebars_path
-                georef_path = self.georef_groupbox.georef_path
-        except:
-            Metashape.app.messageBox("No files selected. If you would like to automatically detect markers, please select files containing scaling and georeferencing information")
+            result = reefshape_core.run_workflow(
+                self.doc, self.chunk, settings, DialogReporter(self))
+        except WorkflowError as err:
+            Metashape.app.messageBox(str(err))
             print("Script aborted")
             self.setEnabled(True)
             return
 
-        # taglab_outputs = self.checkBoxTagLab.isChecked()
-        generic_preselect = self.checkBoxPreSelect.isChecked()
-
-        if(self.checkBoxDefaultRes.isChecked()):
-            ORTHO_RES = 0
-        else:
-            ORTHO_RES = self.spinboxCustomRes.value()
-
-        DEM_RES = 0 # allow metashape to choose dem resolution by default, since we arent exporting for taglab
-
-        target_type = self.georef_groupbox.target_type
-
-        ref_formatting = [self.georef_groupbox.spinboxRefLabel.value(), self.georef_groupbox.spinboxRefX.value(),
-                            self.georef_groupbox.spinboxRefY.value(), self.georef_groupbox.spinboxRefZ.value(),
-                            self.georef_groupbox.spinboxXAcc.value(), self.georef_groupbox.spinboxYAcc.value(),
-                            self.georef_groupbox.spinboxZAcc.value(), self.georef_groupbox.spinboxSkipRows.value()]
-        self.corner_markers = self.georef_groupbox.corner_markers
-        
-        
-        ###### 1. Align & Scale ######
-        # a. Align photos
-        # Markers may have been imported from a prior timepoint (via the Align
-        # Timepoints script) before alignment runs. If any of those markers
-        # physically shifted between timepoints, their image-space projections
-        # are inconsistent across photos and can break alignment / pull camera
-        # optimization toward a worse solution. To avoid this, we disable every
-        # existing marker before alignment and restore each marker's original
-        # enabled state once camera optimization is complete.
-        suppressed_markers = []  # list of (marker, original_enabled) tuples
-        if(self.chunk.tie_points == None):
-            for m in self.chunk.markers:
-                suppressed_markers.append((m, m.enabled))
-                m.enabled = False
-        if(self.chunk.tie_points == None): # check if photos are aligned - assumes they are aligned if there is a point cloud, could change to threshold # of cameras
-            self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = generic_preselect,
-                              reference_preselection=True, filter_mask=False, mask_tiepoints=True,
-                              filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=True, guided_matching=False,
-                              reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
-            self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=True, subdivide_task=True)
-            #second alignment step sometimes adds extra photos to the alignment that were missed on the first pass
-            self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
-            self.updateAndSave()
-            print(" --- Initial alignment completed -- Refining alignment --- ")
-
-            # remove and re-add unaligned photos to try to align them
-            unaligned_photo_paths = []
-            for camera in self.chunk.cameras:
-                if not camera.transform: # Check if the camera is not aligned
-                    unaligned_photo_paths.append(camera.photo.path)
-                    self.chunk.remove([camera]) # Remove unaligned cameras from the chunk
-
-            if unaligned_photo_paths: # only try to add photos if list of paths is not empty
-                self.chunk.addPhotos(unaligned_photo_paths)
-                
-            # rerun alignment without generic preselection
-            self.chunk.matchPhotos(downscale = ALIGN_QUALITY, keypoint_limit_per_mpx = 300, generic_preselection = False,
-                              reference_preselection=True, filter_mask=False, mask_tiepoints=True,
-                              filter_stationary_points=True, keypoint_limit=40000, tiepoint_limit=4000, keep_keypoints=True, guided_matching=False,
-                              reset_matches=False, subdivide_task=True, workitem_size_cameras=20, workitem_size_pairs=80, max_workgroup_size=100)
-            self.chunk.alignCameras(adaptive_fitting = True, min_image=2, reset_alignment=False, subdivide_task=True)
-
-            print(" --- Cameras are aligned and sparse point cloud generated --- ")
-            self.updateAndSave()
-
-        # b. detect markers
-        if(len(self.chunk.markers) == 0 and self.georef_groupbox.autoDetectMarkers): # detects markers only if there are none to start with - could change to threshold # of markers there should be, but i think makes most sense to leave as-is
-            self.chunk.detectMarkers(target_type = target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
-            print(" --- Markers Detected --- ")
-
-        # c. scale model
-        if(len(self.chunk.scalebars) == 0 and self.georef_groupbox.autoDetectMarkers): # creates scalebars only if there are none already
-            ref_except = self.referenceModel(georef_path, ref_formatting)
-            scale_except = ""
-            if(not ref_except):
-                scale_except = self.createScalebars(scalebars_path)
-            # this structure is really clunky but I'm not sure what the best way to differentiate between sub-exceptions is without defining whole exception classes, which seems excessive
-            error = ""
-            if(scale_except or ref_except):
-                if(scale_except):
-                    print(scale_except)
-                    error = error + scale_except
-                if(ref_except):
-                    print(ref_except)
-                    error = error + ref_except
-                Metashape.app.messageBox("Unable to scale and reference model:\n" + error + "Check that the files are formatted correctly and try again, or add markers and scalebars through the Metashape GUI.")
-                self.reject()
-                return
-            else:
-                self.chunk.updateTransform()
-
-
-        if(self.chunk.model == None):
-            # d. optimize camera alignment - skip if optimization has already been run
-            # (manually or by a previous script run). Metashape writes 'optimize/fit_*'
-            # keys to chunk.tie_points.meta whenever optimizeCameras() executes, so
-            # presence of any 'optimize/' key is a reliable signal.
-            if not self.isOptimized():
-                self.gradSelectsOptimization()
-                print( " --- Camera Optimization Complete --- ")
-                self.updateAndSave()
-
-            # Restore enabled state for any markers we suppressed before alignment.
-            # Now that alignment and optimization are done, marker georef is needed
-            # for the chunk transform, boundary creation, and downstream exports.
-            #
-            # CRITICAL: call updateTransform() after re-enabling. Re-enabling
-            # markers alone doesn't tell Metashape to recompute the chunk
-            # transform from the now-enabled reference info — the transform
-            # stays at whatever pre-alignment state it had. Without an
-            # updateTransform here, chunk.region (in internal coords) projects
-            # to nonsense world extents in downstream operations, and
-            # resetRegion + buildDem can produce a multi-thousand-km DEM
-            # bbox that fails to allocate. Observed in the wild on a chunk
-            # that had markers and a boundary copied over by Align Timepoints
-            # but never got a proper transform recompute before mesh + DEM
-            # build.
-            if suppressed_markers:
-                for m, original_enabled in suppressed_markers:
-                    m.enabled = original_enabled
-                suppressed_markers.clear()
-                self.chunk.updateTransform()
-                self.updateAndSave()
-
-            ###### 2. Generate products ######
-            # a. build mesh
-            # reset reconstruction region to make sure the mesh gets built for the full plot
-            self.chunk.resetRegion()
-            # Diagnostic: log the region's internal-unit extent so a future
-            # region-explosion bug (chunk.region inflated by outlier tie
-            # points or a missing updateTransform call) shows up here in
-            # the console rather than 25+ minutes later as a cryptic
-            # `MemoryError: bad allocation` from buildDem.
-            rs = self.chunk.region.size
-            print("  chunk region size (internal units): "
-                  "{:.3g} x {:.3g} x {:.3g}".format(rs.x, rs.y, rs.z))
-            self.updateAndSave()
-            # try 'task' syntax to enable hidden preferences (ie pm_enable) to be changed
-            task = Metashape.Tasks.BuildDepthMaps()
-            task.downscale = DM_QUALITY
-            task.filter_mode = Metashape.FilterMode.MildFiltering
-            task.reuse_depth = True
-            task.max_neighbors = 16
-            task.subdivide_task = True
-            task.workitem_size_cameras = 20
-            task.max_workgroup_size = 100
-            task["pm_enable"] = "1"
-            task.apply(self.chunk)
-            self.updateAndSave()
-            
-            self.chunk.buildModel(
-                surface_type = Metashape.Arbitrary, 
-                interpolation = Metashape.EnabledInterpolation, 
-                face_count=Metashape.HighFaceCount,
-                face_count_custom = 1000000, 
-                source_data = Metashape.DepthMapsData, 
-                keep_depth = True,
-                vertex_colors=False
-            )
-            print(" --- Mesh Generated --- ")
-            self.updateAndSave()
-            
-            if self.checkBoxVertexColors.isChecked():
-                self.chunk.colorizeModel()
-                self.updateAndSave()
-                
-        # if not using automatic referencing, exit script after mesh creation
-        if(not self.autoDetectMarkers and len(self.chunk.markers) == 0):
-            print("Exiting script for manual referencing")
-            Metashape.app.messageBox("Image alignment and mesh building complete.\n\nNow, add referencing information, then re-run the full dialog script to complete processing.")
+        if result.status == reefshape_core.STOPPED_FOR_MANUAL_REFERENCING:
+            Metashape.app.messageBox(
+                "Image alignment and mesh building complete.\n\nNow, add referencing "
+                "information, then re-run the full dialog script to complete processing.")
             self.close()
             return
 
-        # b. build orthomosaic and DEM
-        
-        if(self.chunk.elevation == None):
-            self.chunk.buildDem(source_data = Metashape.ModelData, interpolation = Metashape.EnabledInterpolation,
-                           resolution=ORTHO_RES, subdivide_task=True, workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- Hi-Res DEM Built --- ")
-            
-            
-        if(self.chunk.orthomosaic == None):
-            self.chunk.buildOrthomosaic(resolution = ORTHO_RES, surface_data=Metashape.ElevationData, blending_mode=Metashape.MosaicBlending, fill_holes=True, ghosting_filter=False,
-                                   cull_faces=False, refine_seamlines=False, subdivide_task=True,
-                                   workitem_size_cameras=20, workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- Orthomosaic Built --- ")
-
-            self.updateAndSave()
-
-            # Replace the high-res DEM with one at 1/4 the ortho resolution.
-            # The ortho-resolution DEM was needed only to avoid resampling artifacts
-            # while building the ortho; for storage and downstream use, a coarser
-            # DEM is fine and saves significant disk space. Rebuilds from the mesh
-            # (rather than resampling the existing DEM) so the result is clean.
-            ortho_cell = self.chunk.orthomosaic.resolution
-            dem_resample_res = ortho_cell * 4
-            self.chunk.elevation = None
-            self.chunk.buildDem(source_data=Metashape.ModelData, interpolation=Metashape.EnabledInterpolation,
-                                resolution=dem_resample_res, subdivide_task=True,
-                                workitem_size_tiles=10, max_workgroup_size=100)
-            print(" --- DEM resampled to {:.4f} m for storage --- ".format(dem_resample_res))
-            self.updateAndSave()
-
-
-        # c. create boundary (skip if an outer boundary already exists, e.g.
-        # copied from a reference chunk by the Align Timepoints script)
-        has_boundary = False
-        if self.chunk.shapes:
-            for shape in self.chunk.shapes:
-                if shape.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
-                    has_boundary = True
-                    break
-        if not has_boundary:
-            has_boundary = self.boundaryCreation()
-            if has_boundary:
-                print(" --- Boundary Polygon Created ---")
-            else:
-                print(" --- Boundary polygon was NOT created; downstream steps that depend on it will be skipped ---")
-
-        # Track any steps that get skipped or modified during the export phase
-        # so we can surface them in the completion dialog at the very end.
-        warnings = []
-
-        ###### 3. Export products ######
-
-        # If no boundary exists and the user wants TagLab outputs (which normally
-        # clip to the boundary), ask how to proceed before running any exports.
-        # The two other boundary-dependent steps — the boundary shapefile export
-        # and the report's temporary-disable loop — handle a missing boundary
-        # gracefully below, so we only need to gate on TagLab here.
-        taglab_clip = True
-        if not has_boundary and self.checkBoxTagLab.isChecked():
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                "No boundary polygon",
-                "No OuterBoundary polygon exists in this chunk, so the TagLab "
-                "outputs cannot be clipped to the plot.\n\n"
-                "Yes — continue and export uncropped TagLab products.\n"
-                "No  — stop here and return to the dialog so you can uncheck "
-                "TagLab outputs and re-run, or close the dialog to create a "
-                "boundary manually (see scripts 06 or 08) before re-running.",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
-            )
-            if reply == QtWidgets.QMessageBox.No:
-                print("Export aborted by user — no boundary polygon available for TagLab clipping")
-                self.setEnabled(True)
-                return
-            taglab_clip = False
-            warnings.append("TagLab outputs were exported uncropped because no boundary polygon was available.")
-        if not has_boundary:
-            warnings.append(
-                "Boundary polygon could not be created automatically — corner markers {} were not all found in the chunk. "
-                "The boundary shapefile export was skipped. "
-                "To produce a boundary, either run script 06 (corner markers) or script 08 (from camera footprints) and re-run this workflow."
-                .format(self.corner_markers)
-            )
-
-        # set up compression parameters
-        #first, for regular orthomosaic
-        jpg = Metashape.ImageCompression()
-        jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG
-        jpg.jpeg_quality = 90
-        jpg.tiff_big = True
-        jpg.tiff_overviews = True
-        # Write the TIFF as tiled rather than stripped. JPEG-compressed TIFF
-        # strips are capped at 65500 px per libtiff, which orthomosaics of
-        # high-res reef plots routinely exceed. Tiled JPEG compresses each
-        # internal tile independently (typically 256/512 px) so the limit
-        # doesn't apply. GIS software reads tiled and stripped TIFFs the same.
-        jpg.tiff_tiled = True
-        #lzw for DEM and TagLab products
-        lzw = Metashape.ImageCompression()
-        lzw.tiff_compression = Metashape.ImageCompression.TiffCompressionLZW
-        lzw.tiff_big = True
-        lzw.tiff_overviews = True
-        
-        # generate report              
-        if self.checkBoxReport.isChecked():
-            report_path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".pdf"
-            if not os.path.exists(report_path):
-                # --- Temporarily disable boundary polygon for uncropped report ---
-                original_boundaries = []
-                if self.chunk.shapes:
-                    for shape in self.chunk.shapes:
-                        if shape.geometry and shape.geometry.type == Metashape.Geometry.Type.PolygonType:
-                            if shape.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
-                                original_boundaries.append((shape, shape.boundary_type))
-                                shape.boundary_type = Metashape.Shape.BoundaryType.NoBoundary
-
-                # Export report
-                human_date = self.format_date_label(self.chunk.label)
-                # Metashape 2.3 renamed include_system_info -> save_system_info
-                ms_version = tuple(int(p) for p in Metashape.app.version.split(".")[:2])
-                system_info_kwarg = "save_system_info" if ms_version >= (2, 3) else "include_system_info"
-                self.chunk.exportReport(
-                    path=report_path,
-                    title=self.project_name,
-                    description="\nProcessing report for " + self.project_name + " photographed on " + human_date + "\nCreated with ReefShape v1.3\nProcessed on:",
-                    font_size=12,
-                    page_numbers=True,
-                    **{system_info_kwarg: True}
-                )
-
-                # --- Restore original boundary types ---
-                for shape, original_type in original_boundaries:
-                    shape.boundary_type = original_type
-                     
-
-        # generate main orthomosaic and DEM for GIS
-        if(self.checkBoxExport.isChecked()):
-            # export orthomosaic and DEM in full format
-            ortho_path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + ".tif"
-            dem_path = self.output_dir + "/" + self.project_name + "_" + self.chunk.label + "_DEM.tif"
-            if(not os.path.exists(ortho_path)):
-                self.chunk.exportRaster(path = ortho_path, resolution = ORTHO_RES,
-                                   source_data = Metashape.OrthomosaicData, split_in_blocks = False, image_compression = jpg,
-                                   save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='Orthomosaic', description='Generated by Agisoft Metashape with ReefShape')
-            
-            if(not os.path.exists(dem_path)):
-                self.chunk.exportRaster(path = dem_path, resolution = DEM_RES, nodata_value = -5,
-                                   source_data = Metashape.ElevationData, split_in_blocks = False, image_compression = lzw,
-                                   save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                                   min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=False,title='DEM', description='Generated by Agisoft Metashape with ReefShape')
-
-            # build output path for boundary shapefile - this is necessary since the files will be placed in their own new folder within the output folder that the user created/selected.
-            # Skip when no boundary exists; otherwise we'd create an empty folder
-            # and write a polygon-less shapefile.
-            if has_boundary:
-                shape_dir = os.path.join(self.output_dir, self.project_name + "_" + self.chunk.label + "_boundary")
-                if(not os.path.exists(shape_dir)):
-                    os.mkdir(shape_dir)
-                self.chunk.exportShapes(path = os.path.join(shape_dir, self.project_name + "_" + self.chunk.label + "_boundary.shp"), save_points=False, save_polylines=False, save_polygons=True,
-                                   format = Metashape.ShapesFormatSHP, polygons_as_polylines=False, save_labels=True, save_attributes=True)
-
-
-        # export ortho and dem in blockwise format for Taglab
-        if(self.checkBoxTagLab.isChecked()):
-            self.chunk.exportRaster(path = self.output_dir + "/taglab_outputs/" + self.project_name + "_" + self.chunk.label + ".tif", resolution = ORTHO_RES,
-                               source_data = Metashape.OrthomosaicData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get oerridden
-                               save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                               min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=taglab_clip,title='Orthomosaic', description='Generated by Agisoft Metashape')
-            self.chunk.exportRaster(path = self.output_dir + "/taglab_outputs/" + self.project_name + "_" + self.chunk.label + "_DEM.tif", resolution = ORTHO_RES, nodata_value = -5,
-                               source_data = Metashape.ElevationData, block_width = 32767, block_height = 32767, split_in_blocks = True, image_compression = lzw, # remainder of parameters are defaults specified to ensure any alternate settings get overridden
-                               save_kml=False, save_world=False, save_scheme=False, save_alpha=True, image_description='', network_links=True, global_profile=False,
-                               min_zoom_level=-1, max_zoom_level=-1, white_background=True, clip_to_boundary=taglab_clip,title='DEM', description='Generated by Agisoft Metashape')
-
-        
-        ###### 4. Clean up project ######
-        self.cleanProject()
-        self.updateAndSave()
-        
-        ###### 5. Finish Script ######
         print("Script finished")
-        if warnings:
-            warning_text = "\n\n".join("- " + w for w in warnings)
+        if result.warnings:
             Metashape.app.messageBox(
                 "ReefShape has finished processing, but some steps were skipped or modified:\n\n"
-                + warning_text
-                + "\n\nRemember to verify all data products before analysis."
-            )
+                + "\n\n".join("- " + w for w in result.warnings)
+                + "\n\nRemember to verify all data products before analysis.")
         else:
-            Metashape.app.messageBox("ReefShape has finished processing!\n\nRemember to verify all data products to sufficient data quality before beginning analysis.")
+            Metashape.app.messageBox(
+                "ReefShape has finished processing!\n\nRemember to verify all data products "
+                "to sufficient data quality before beginning analysis.")
         self.saveSettings()
         self.close()
 
+    def buildWorkflowSettings(self):
+        '''
+        Translate the dialog's widget state into a WorkflowSettings.
 
-    ############# Workflow Functions #############
+        This is the whole of what the dialog contributes to processing: read
+        every widget once, up front, so the pipeline never has to reach back
+        into Qt for a value mid-run.
+        '''
+        georef = self.georef_groupbox
 
-    def updateAndSave(self):
-        print("Saving Project...")
-        Metashape.app.update()
-        Metashape.app.document.save()
-        print("Project Saved")
+        # Skip the "More..." sentinel if it is somehow still active -- the
+        # slot normally reverts off it. A crs of None means "leave the chunk's
+        # CRS alone".
+        crs = self.crs_options.get(self.comboCRS.currentText())
+
+        return WorkflowSettings(
+            crs=crs,
+            generic_preselection=self.checkBoxPreSelect.isChecked(),
+            # The combo runs Ultra High -> Lowest and Metashape's depth-map
+            # downscale doubles at each step.
+            mesh_quality_downscale=2 ** self.comboMeshQuality.currentIndex(),
+            vertex_colors=self.checkBoxVertexColors.isChecked(),
+            ortho_resolution=self.spinboxCustomRes.value(),
+            use_default_resolution=self.checkBoxDefaultRes.isChecked(),
+
+            georef_enabled=bool(georef.autoDetectMarkers),
+            target_type=georef.target_type,
+            scalebar_path=getattr(georef, "scalebars_path", ""),
+            georef_path=getattr(georef, "georef_path", ""),
+            ref_formatting=[
+                georef.spinboxRefLabel.value(), georef.spinboxRefX.value(),
+                georef.spinboxRefY.value(), georef.spinboxRefZ.value(),
+                georef.spinboxXAcc.value(), georef.spinboxYAcc.value(),
+                georef.spinboxZAcc.value(), georef.spinboxSkipRows.value()],
+            corner_markers=georef.corner_markers,
+
+            output_dir=self.output_dir,
+            export_report=self.checkBoxReport.isChecked(),
+            export_gis=self.checkBoxExport.isChecked(),
+            export_taglab=self.checkBoxTagLab.isChecked(),
+            project_name=self.project_name,
+        )
 
     def refreshChunkNameDisplay(self):
         try:
@@ -1100,286 +828,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 self.add_photos_groupbox.txtChunkName.setPlainText(chunk.label)
         except Exception as e:
             print(f"Error updating chunk name in GUI: {e}")
-    
-    
-    def createScalebars(self, path):
-        '''
-        Creates scalebars in the project's active chunk based on information from
-        a user-provided text file
-        '''
-        iNumScaleBars=len(self.chunk.scalebars)
-        iNumMarkers=len(self.chunk.markers)
-        # Check for existing markers
-        if (iNumMarkers == 0):
-            raise Exception("No markers found! Unable to create scalebars.")
-        # Check for already existing scalebars
-        if (iNumScaleBars > 0):
-            print('There are already ',iNumScaleBars,' scalebars in this project.')
 
-        try:
-            file = open(path)
-            eof = False
-            line = file.readline()
-            while not eof:
-              # split the line and load into variables
-              point1, point2, dist, acc = line.split(",")
-              # find the corresponding scalebar, if there is any
-              scalebarfound = 0
-              if (iNumScaleBars > 0):
-                 for sbScaleBar in self.chunk.scalebars:
-                    strScaleBarLabel_1 = point1 + "_" + point2
-                    strScaleBarLabel_2 = point2 + "_" + point1
-                    if sbScaleBar.label == strScaleBarLabel_1 or sbScaleBar.label == strScaleBarLabel_2:
-                       # scalebar found
-                       scalebarfound = 1
-                       # update it
-                       sbScaleBar.reference.distance = float(dist)
-                       sbScaleBar.reference.accuracy = float(acc)
-              # Check if scalebar was found
-              if (scalebarfound == 0):
-                 # Scalebar was not found: add a new one
-                 # Find Marker 1 with label described by "point1"
-                 bMarker1Found = 0
-                 for marker in self.chunk.markers:
-                    if (marker.label == point1):
-                       marker1 = marker
-                       bMarker1Found = 1
-                       break
-                 # Find Marker 2 with label described by "point2"
-                 bMarker2Found = 0
-                 for marker in self.chunk.markers:
-                    if (marker.label == point2):
-                       marker2 = marker
-                       bMarker2Found = 1
-                       break
-                 # Check if both markers were detected
-                 if bMarker1Found == 1 and bMarker2Found == 1:
-                    # Markers were detected. Create new scalebar.
-                    sbScaleBar = self.chunk.addScalebar(marker1,marker2)
-                    # update it:
-                    sbScaleBar.reference.distance = float(dist)
-                    sbScaleBar.reference.accuracy = float(acc)
-                 else:
-                    # Marker not found. Raise exception and print, but do not stop process.
-                    if (bMarker1Found == 0):
-                       print("Marker " + point1 + " was not found!")
-                    if (bMarker2Found == 0):
-                       print("Marker " + point2 + " was not found!")
-              #All done.
-              #reading the next line in input file
-              line = file.readline()
-              if not len(line):
-                 eof = True
-                 break
-            file.close()
-            print(" --- Scalebars Created --- ")
-
-        except:
-           return "Script error: There was a problem reading scalebar data\n"
-
-
-    def referenceModel(self, path, formatting):
-        '''
-        Imports marker georeferencing data from a user-provided csv, for which
-        the user may specify the correct column arrangement. The function will raise
-        an exception if the referencing information is not numeric
-
-        If the project already has georeferencing information, this information will be overwritten.
-        '''
-        # set indices for which columns lat/long data is in
-        n = formatting[0] - 1
-        x = formatting[1] - 1
-        y = formatting[2] - 1
-        z = formatting[3] - 1
-        X = formatting[4] - 1
-        Y = formatting[5] - 1
-        Z = formatting[6] - 1
-        skip = formatting[7] - 1
-
-        try:
-            # create file path for reformatted georeferencing data
-            new_path = path[:-4] + "_reformat.csv"
-
-            # read in raw georeferencing data and put it in a list
-            ref = []
-            file = open(path)
-            eof = False
-            line = file.readline()
-            # skip the specified number of rows when reading in data prior to reformatting
-            for i in range(0, skip):
-                line = file.readline()
-
-            while not eof:
-                marker_ref = line.strip().split(sep = ",")
-                ref_line = [marker_ref[n], marker_ref[x], marker_ref[y], marker_ref[z], marker_ref[X], marker_ref[Y], marker_ref[Z]]
-                for item in ref_line[1:]:
-                    try:
-                        item_float = float(item)
-                    except Exception as err:
-                        print("Script error: '" + item + "'" + " cannot be read as a coordinate value. Your column assignments may be incorrect.")
-                        raise
-                #print(ref_line)
-                if(not len(ref)):
-                    ref = [ref_line]
-                elif(len(ref) > 0):
-                    ref.append(ref_line)
-
-                line = file.readline()
-                if not len(line):
-                     eof = True
-                     break
-
-            file.close()
-
-            header = ["label", "x", "y", "z", "X_acc", "Y_acc", "Z_acc"]
-            # write cleaned georeferencing data to a new file
-            with open(new_path, 'w', newline = '') as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
-                writer.writerows(ref)
-            f.close()
-
-            # import new georeferencing data
-            self.chunk.importReference(path = new_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "nxyzXYZ", skip_rows = skip,
-                                  crs = self.chunk.crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
-
-            os.remove(new_path)
-            print(" --- Georeferencing Updated --- ")
-        except:
-            return "Script error: There was a problem reading georeferencing data\n"
-
-
-
-    def isOptimized(self):
-        '''
-        Returns True if camera optimization has already been performed on the
-        current chunk (manually via the Metashape GUI or by an earlier run of
-        this script). Detection works by looking for keys prefixed
-        'OptimizeCameras/' in `chunk.meta` — Metashape writes these whenever
-        optimizeCameras() runs, regardless of how it was triggered.
-
-        The confusion-prone bit: this metadata is stored on `chunk.meta`,
-        NOT on `chunk.tie_points.meta` (which only holds MatchPhotos/*).
-        Earlier revisions of this method looked in the wrong dict.
-        '''
-        try:
-            return any(k.startswith('OptimizeCameras/')
-                       for k in self.chunk.meta.keys())
-        except (AttributeError, TypeError):
-            return False
-
-
-    def gradSelectsOptimization(self):
-        '''
-        Refines camera alignment by filtering out tie points with high error
-        '''
-        # define thresholds for reconstruction uncertainty and projection accuracy
-        reconun = float(25)
-        projecac = float(15)
-
-        # initiate filters, remove points above thresholds
-        f = Metashape.TiePoints.Filter()
-        f.init(self.chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
-        f.removePoints(reconun)
-
-        f = Metashape.TiePoints.Filter()
-        f.init(self.chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
-        f.removePoints(projecac)
-
-        # optimize camera locations based on all distortion parameters
-        self.chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True,
-                              fit_b1=True, fit_b2=True, fit_k1=True,
-                              fit_k2=True, fit_k3=True, fit_k4=True,
-                              fit_p1=True, fit_p2=True, fit_corrections=True,
-                              adaptive_fitting=False, tiepoint_covariance=False)
-
-
-    def create_shape_from_markers(self, marker_list):
-        '''
-        Creates a boundary shape from a given set of markers
-        '''
-        if not self.chunk:
-                print("Empty project, script aborted")
-                return 0
-        if len(marker_list) < 4:
-                print("At least four markers required to create a plot. Boundary creation aborted.")
-                return 0
-
-        T = self.chunk.transform.matrix
-        crs = self.chunk.crs
-        if not self.chunk.shapes:
-                self.chunk.shapes = Metashape.Shapes()
-                self.chunk.shapes.crs = self.chunk.crs
-        shape_crs = self.chunk.shapes.crs
-
-
-        coords = [shape_crs.project(T.mulp(marker.position)) for marker in marker_list]
-
-        shape = self.chunk.shapes.addShape()
-        shape.label = "Marker Boundary"
-        shape.geometry.type = Metashape.Geometry.Type.PolygonType
-        shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
-        shape.geometry = Metashape.Geometry.Polygon(coords)
-
-        return 1
-
-    def boundaryCreation(self):
-        '''
-        Wrapper function to create a boundary shape. Iterates self.corner_markers
-        in the order the user specified so the resulting polygon follows that
-        cyclic order (and won't self-intersect as long as the user listed the
-        corners in cyclic order). Returns True if a boundary polygon was created,
-        False if it could not be (e.g. fewer than 4 matching corner markers, or
-        labels with no digits to match against).
-        '''
-        m_list = []
-        for corner_num in self.corner_markers:
-            for marker in self.chunk.markers:
-                # Skip markers we can't safely use: no estimated position
-                # (not placed/converged) or no digits in label to compare.
-                if marker.position is None:
-                    continue
-                digits = re.search(r'(\d+)', marker.label)
-                if digits is None:
-                    continue
-                if str(corner_num) == digits.group(0):
-                    m_list.append(marker)
-                    break  # only one marker per corner_num
-        if len(m_list) < 4:
-            print("Could not find all 4 corner markers {} in the chunk. "
-                  "Boundary creation skipped.".format(self.corner_markers))
-            return False
-        return bool(self.create_shape_from_markers(m_list[:4]))
-
-
-
-    def cleanProject(self):
-
-        # Remove orthophotos without removing orthomosaic
-        ortho = self.chunk.orthomosaic
-        if ortho:
-            ortho.removeOrthophotos()
-
-        # Remove key points (if present)
-        sparsecloud = self.chunk.tie_points
-        if sparsecloud:
-            sparsecloud.removeKeypoints()
-
-        # Remove depth maps (if present)
-        depthmaps = self.chunk.depth_maps
-        if depthmaps:
-            depthmaps.clear()
-            
-    def format_date_label(self, date_str):
-        """
-        Tries to convert YYYYMMDD string to human-readable format, e.g. "20250612" -> "June 12, 2025"
-        If chunk label is not in this format, just uses chunk label
-        """
-        try:
-            date_obj = datetime.strptime(date_str, "%Y%m%d")
-            return date_obj.strftime("%B %d, %Y")
-        except ValueError:
-            return date_str
 
     # ----- Slots for Dialog Box -----
     def getOutputDir(self):

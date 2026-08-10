@@ -98,6 +98,18 @@ class Reporter:
         """Something was skipped or degraded. Collected and surfaced at the end."""
         print("WARNING: {}".format(message))
 
+    def confirm_uncropped_taglab(self, settings):
+        """Decide whether to export TagLab products with no boundary to clip to.
+
+        Non-interactive by default: the batch runner has already answered this
+        in `settings`. The menu dialog overrides it to ask, which is what
+        preserves its existing behaviour of stopping to check rather than
+        quietly shipping unclipped products.
+
+        Return True to export uncropped, False to abort the run.
+        """
+        return settings.taglab_allow_uncropped
+
     def progress_callback(self):
         """A callable suitable for Metashape's `progress=` keyword.
 
@@ -187,7 +199,14 @@ class WorkflowSettings:
         return 0.0 if self.use_default_resolution else self.ortho_resolution
 
     def resolve_target_type(self):
-        """Map the target-type name to its Metashape constant."""
+        """Map the target-type name to its Metashape constant.
+
+        Accepts an actual constant too, and passes it straight through: the
+        menu dialog already holds one (it can import Metashape), so making it
+        convert to a string just for us to convert back would be pointless.
+        """
+        if not isinstance(self.target_type, str):
+            return self.target_type
         constant = getattr(Metashape, self.target_type, None)
         if constant is None:
             raise WorkflowError(
@@ -504,6 +523,106 @@ def find_outer_boundary(chunk):
 # Housekeeping
 # --------------------------------------------------------------------------
 
+# Ceiling on DEM/orthomosaic size. Calibrated against a real survey: the
+# TimsReef2 plot is 65536 x 73727 px (4.8 gigapixels) at 0.5 mm, so this
+# leaves roughly 20x headroom for a genuinely large plot while still catching
+# a runaway. At 4 bytes per cell, 100 gigapixels is 400 GB for a single band --
+# unambiguously not something any machine is going to produce.
+MAX_RASTER_CELLS = 1e11
+
+
+def estimate_raster_cells(chunk, resolution):
+    """Rough cell count for a raster covering the chunk at `resolution`.
+
+    Returns (cells, width_m, height_m), or None if the extent cannot be
+    determined.
+
+    Works from `chunk.region` -- the reconstruction region, which the workflow
+    has just reset to encompass the data -- scaled into metres by the chunk
+    transform. Projecting corners through the CRS instead would give degrees
+    for a compound geographic CRS, needing a latitude-dependent conversion
+    before it could be compared against a resolution in metres; the transform
+    scale gives metres directly.
+    """
+    try:
+        if resolution <= 0:
+            return None
+        if not chunk.transform or not chunk.transform.scale:
+            return None
+        size = chunk.region.size
+        if size is None:
+            return None
+        scale = chunk.transform.scale
+        width = abs(size.x) * scale
+        height = abs(size.y) * scale
+        return (width / resolution) * (height / resolution), width, height
+    except Exception:
+        return None
+
+
+def check_raster_sanity(chunk, resolution, reporter):
+    """Refuse to build a DEM that indicates a broken or missing chunk transform.
+
+    Two failure modes, both of which produce a raster large enough to exhaust
+    the machine:
+
+    *No transform scale.* The chunk was never scaled, so its coordinates are
+    in arbitrary internal units and a resolution in metres means nothing. This
+    is the state a chunk lands in when the scalebar file names targets that
+    were not detected and the georeferencing markers are too few to solve a
+    transform. Observed: a 12-photo chunk that found one corner marker and no
+    scalebars reached 41 GB of resident memory inside buildDem before being
+    killed. A correctly scaled chunk always has a scale -- TimsReef2's is
+    0.368.
+
+    *Absurd extent.* The transform exists but is wrong, typically from markers
+    matched to the wrong target numbers, giving a plot kilometres across.
+
+    Interactively either is merely baffling. In an unattended overnight batch
+    it can take the whole machine down and cost every job still queued behind
+    it, so both become one clean job failure with an actionable message.
+
+    `resolution` of 0 means Metashape picks the resolution from the data, in
+    which case it cannot ask for something it has no memory for and the check
+    does not apply.
+    """
+    if resolution <= 0:
+        return
+
+    if not chunk.transform or not chunk.transform.scale:
+        raise WorkflowError(
+            "This chunk has no scale, so a DEM at {} m resolution cannot be "
+            "built -- the model's coordinates are in arbitrary units.\n\n"
+            "The chunk has {} marker(s) and {} scalebar(s). Scaling needs "
+            "scalebars whose targets were actually detected in these photos, "
+            "or enough georeferenced markers to solve a transform.\n\n"
+            "Check that the scalebar file matches the targets in this plot "
+            "and that marker detection found them."
+            .format(resolution, len(chunk.markers), len(chunk.scalebars)))
+
+    estimate = estimate_raster_cells(chunk, resolution)
+    if estimate is None:
+        return
+    cells, width, height = estimate
+
+    reporter.info("  region extent: {:.1f} m x {:.1f} m -> {:.2f} gigapixels "
+                  "at {} m".format(width, height, cells / 1e9, resolution))
+
+    if cells <= MAX_RASTER_CELLS:
+        return
+
+    raise WorkflowError(
+        "Refusing to build a DEM of about {:.0f} gigapixels ({:.0f} m x "
+        "{:.0f} m at {} m resolution).\n\n"
+        "A reef plot this size is almost certainly a scaling problem rather "
+        "than a real survey extent. Check that:\n"
+        "  - the scalebar file matches the targets actually in this chunk\n"
+        "  - all four corner markers were detected and correctly numbered\n"
+        "  - the georeferencing file's column layout is set correctly\n\n"
+        "Building this raster would need hundreds of gigabytes of memory."
+        .format(cells / 1e9, width, height, resolution))
+
+
 def clean_project(chunk):
     """Drop intermediates that are large and cheap to regenerate."""
     ortho = chunk.orthomosaic
@@ -730,6 +849,7 @@ def run_workflow(doc, chunk, settings, reporter=None):
         return WorkflowResult(STOPPED_FOR_MANUAL_REFERENCING, warnings, outputs)
 
     if chunk.elevation is None:
+        check_raster_sanity(chunk, ortho_res, reporter)
         reporter.step("Building DEM")
         chunk.buildDem(source_data=Metashape.ModelData,
                        interpolation=Metashape.EnabledInterpolation,
@@ -789,7 +909,7 @@ def run_workflow(doc, chunk, settings, reporter=None):
             "re-run this workflow.".format(settings.corner_markers))
 
         if settings.export_taglab:
-            if not settings.taglab_allow_uncropped:
+            if not reporter.confirm_uncropped_taglab(settings):
                 raise WorkflowError(
                     "TagLab outputs were requested but this chunk has no "
                     "boundary polygon to clip them to. Either create a "
