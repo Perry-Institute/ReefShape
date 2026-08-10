@@ -406,21 +406,38 @@ def reference_model(chunk, path, formatting):
 # Alignment and optimization
 # --------------------------------------------------------------------------
 
+# Keys that only a real optimizeCameras() call writes.
+#
+# The obvious test -- "does chunk.meta have any OptimizeCameras/ key?" -- is
+# wrong, and wrong in the direction that silently skips work. alignCameras
+# writes `OptimizeCameras/sigma0 = 0` as a placeholder, so the bare prefix is
+# already present the moment alignment finishes.
+#
+# Measured on two real projects. A chunk that had only been aligned carried
+# exactly one such key, sigma0 = 0. A chunk that had genuinely been optimized
+# carried sigma0 = 0.394 plus fit_flags, duration and adaptive_fitting. Only
+# the latter group is evidence.
+OPTIMIZED_MARKER_KEYS = ("OptimizeCameras/fit_flags",
+                         "OptimizeCameras/duration")
+
+
 def is_optimized(chunk):
-    """True if camera optimization has already run on this chunk.
+    """True if camera optimization has genuinely run on this chunk.
 
-    Metashape writes 'OptimizeCameras/*' keys into `chunk.meta` whenever
-    optimizeCameras() runs, however it was triggered -- so this detects a
-    manual optimization in the GUI as well as a previous scripted one.
+    Used to skip re-optimizing a chunk the user already optimized by hand in
+    Metashape, or that an earlier run of this workflow processed. Detects
+    either, since both go through optimizeCameras().
 
-    The metadata lives on `chunk.meta`, not `chunk.tie_points.meta` (which
-    only carries MatchPhotos/*). An earlier revision looked in the wrong dict
-    and silently re-optimized every run.
+    Getting this wrong in the "already done" direction costs accuracy without
+    any visible symptom -- the workflow simply never filters tie points or
+    refines the camera calibration, and still produces a mesh and an
+    orthomosaic that look fine. See OPTIMIZED_MARKER_KEYS.
     """
     try:
-        return any(k.startswith("OptimizeCameras/") for k in chunk.meta.keys())
+        keys = set(chunk.meta.keys())
     except (AttributeError, TypeError):
         return False
+    return any(key in keys for key in OPTIMIZED_MARKER_KEYS)
 
 
 def grad_selects_optimization(chunk):
