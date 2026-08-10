@@ -47,9 +47,9 @@ class DialogReporter(reefshape_core.Reporter):
 
     Only two hooks need overriding. info()/warn() keep printing to the console,
     which is where users of the menu script already watch progress, while
-    confirm_uncropped_taglab() restores the one genuinely interactive decision
-    in the workflow. Everything else the dialog used to announce mid-run is
-    now returned in the WorkflowResult and reported once, at the end.
+    step() also pumps the event loop. Everything the dialog used to announce
+    mid-run is now returned in the WorkflowResult and reported once, at the
+    end -- including the cases that used to interrupt with a question.
     """
 
     def __init__(self, dialog):
@@ -60,21 +60,6 @@ class DialogReporter(reefshape_core.Reporter):
         # Keep the dialog painting during long stages; without this the window
         # goes unresponsive-grey on Windows for the whole of a mesh build.
         QtWidgets.QApplication.processEvents()
-
-    def confirm_uncropped_taglab(self, settings):
-        reply = QtWidgets.QMessageBox.question(
-            self.dialog,
-            "No boundary polygon",
-            "No OuterBoundary polygon exists in this chunk, so the TagLab "
-            "outputs cannot be clipped to the plot.\n\n"
-            "Yes - continue and export uncropped TagLab products.\n"
-            "No  - stop here and return to the dialog so you can uncheck "
-            "TagLab outputs and re-run, or close the dialog to create a "
-            "boundary manually (see scripts 06 or 08) before re-running.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
-        )
-        return reply == QtWidgets.QMessageBox.Yes
 
 
 class FullWorkflowDlg(QtWidgets.QDialog):

@@ -18,8 +18,15 @@ Everything the dialog would have asked or announced goes through two channels
 instead:
 
   * `Reporter` -- progress, log lines and non-fatal warnings flow outward.
-  * `WorkflowSettings` -- decisions that used to be mid-run questions are
-    answered up front. See `taglab_allow_uncropped`.
+  * `WorkflowSettings` -- every decision is made before the run starts.
+
+A related principle: this module prefers stopping usefully over failing. When
+referencing has not worked, alignment and the mesh are still saved and the run
+returns STOPPED_FOR_MANUAL_REFERENCING, so the expensive work survives and a
+re-run resumes from the DEM. When a boundary is missing, the exports that
+need one are skipped and the rest still happen. In an unattended batch, a job
+that fails outright wastes hours and can take the queue behind it down with
+it; one that stops with a clear warning does not.
 
 Note the explicit `import os`. Metashape's *GUI* script host injects `os` into
 script globals, which is why the menu scripts have historically got away with
@@ -98,18 +105,6 @@ class Reporter:
         """Something was skipped or degraded. Collected and surfaced at the end."""
         print("WARNING: {}".format(message))
 
-    def confirm_uncropped_taglab(self, settings):
-        """Decide whether to export TagLab products with no boundary to clip to.
-
-        Non-interactive by default: the batch runner has already answered this
-        in `settings`. The menu dialog overrides it to ask, which is what
-        preserves its existing behaviour of stopping to check rather than
-        quietly shipping unclipped products.
-
-        Return True to export uncropped, False to abort the run.
-        """
-        return settings.taglab_allow_uncropped
-
     def progress_callback(self):
         """A callable suitable for Metashape's `progress=` keyword.
 
@@ -163,7 +158,6 @@ class WorkflowSettings:
                  export_report=True,
                  export_gis=True,
                  export_taglab=True,
-                 taglab_allow_uncropped=True,
                  project_name=""):
         self.crs = crs
         self.generic_preselection = generic_preselection
@@ -184,13 +178,10 @@ class WorkflowSettings:
         self.output_dir = output_dir
         self.export_report = export_report
         self.export_gis = export_gis
+        # TagLab exports additionally require a boundary polygon to clip to;
+        # without one they are skipped with a warning rather than produced
+        # uncropped, which would have to be re-exported before use anyway.
         self.export_taglab = export_taglab
-        # A batch has nobody to ask. Script 01 stops and asks what to do when
-        # TagLab outputs are requested but no boundary polygon exists; here
-        # the answer is decided in advance. True exports uncropped and records
-        # a warning; False raises so a plot never quietly ships unclipped
-        # TagLab products.
-        self.taglab_allow_uncropped = taglab_allow_uncropped
 
         self.project_name = project_name
 
@@ -262,7 +253,6 @@ class WorkflowSettings:
             export_report=export.get("report", True),
             export_gis=export.get("gis_outputs", True),
             export_taglab=export.get("taglab_outputs", True),
-            taglab_allow_uncropped=export.get("taglab_allow_uncropped", True),
             project_name=os.path.splitext(os.path.basename(project_path))[0],
         )
 
@@ -560,67 +550,73 @@ def estimate_raster_cells(chunk, resolution):
         return None
 
 
-def check_raster_sanity(chunk, resolution, reporter):
-    """Refuse to build a DEM that indicates a broken or missing chunk transform.
+def referencing_problem(chunk, resolution, reporter):
+    """Describe why this chunk isn't ready for a DEM, or None if it is.
 
-    Two failure modes, both of which produce a raster large enough to exhaust
-    the machine:
+    Returns a message rather than raising, because the right response is to
+    stop cleanly after the mesh rather than to fail the job. Alignment and
+    mesh building are the expensive part and their results stay valid; once
+    the user supplies the missing referencing, a re-run skips straight past
+    them to the DEM. Failing outright would throw that work away, and in a
+    batch would do it while twenty more plots waited behind it.
+
+    Two conditions, both meaning the chunk's coordinates cannot be trusted at
+    a resolution expressed in metres:
 
     *No transform scale.* The chunk was never scaled, so its coordinates are
-    in arbitrary internal units and a resolution in metres means nothing. This
-    is the state a chunk lands in when the scalebar file names targets that
-    were not detected and the georeferencing markers are too few to solve a
-    transform. Observed: a 12-photo chunk that found one corner marker and no
-    scalebars reached 41 GB of resident memory inside buildDem before being
-    killed. A correctly scaled chunk always has a scale -- TimsReef2's is
-    0.368.
+    in arbitrary internal units. This is where a chunk lands when the scalebar
+    file names targets that were not detected and there are too few
+    georeferenced markers to solve a transform. Observed: a 12-photo chunk
+    with one corner marker and no scalebars reached 41 GB resident inside
+    buildDem before being killed. A correctly scaled chunk always has a
+    scale -- TimsReef2's is 0.368.
 
-    *Absurd extent.* The transform exists but is wrong, typically from markers
-    matched to the wrong target numbers, giving a plot kilometres across.
+    *Absurd extent.* A transform exists but is wrong, typically from markers
+    matched to the wrong target numbers, implying a plot kilometres across.
 
-    Interactively either is merely baffling. In an unattended overnight batch
-    it can take the whole machine down and cost every job still queued behind
-    it, so both become one clean job failure with an actionable message.
-
-    `resolution` of 0 means Metashape picks the resolution from the data, in
-    which case it cannot ask for something it has no memory for and the check
-    does not apply.
+    `resolution` of 0 means Metashape picks the resolution from the data, so
+    it cannot be asked for something the machine has no memory for.
     """
     if resolution <= 0:
-        return
+        return None
 
     if not chunk.transform or not chunk.transform.scale:
-        raise WorkflowError(
-            "This chunk has no scale, so a DEM at {} m resolution cannot be "
-            "built -- the model's coordinates are in arbitrary units.\n\n"
+        return (
+            "This chunk has no scale, so its coordinates are in arbitrary "
+            "units and a DEM at {} m resolution cannot be built. Alignment "
+            "and the mesh are complete and have been saved.\n\n"
             "The chunk has {} marker(s) and {} scalebar(s). Scaling needs "
             "scalebars whose targets were actually detected in these photos, "
-            "or enough georeferenced markers to solve a transform.\n\n"
-            "Check that the scalebar file matches the targets in this plot "
-            "and that marker detection found them."
+            "or enough georeferenced markers to solve a transform. Check that "
+            "the scalebar file matches the targets in this plot and that "
+            "marker detection found them.\n\n"
+            "Add the scaling and georeferencing information, then re-run to "
+            "continue from the DEM onwards."
             .format(resolution, len(chunk.markers), len(chunk.scalebars)))
 
     estimate = estimate_raster_cells(chunk, resolution)
     if estimate is None:
-        return
+        return None
     cells, width, height = estimate
 
     reporter.info("  region extent: {:.1f} m x {:.1f} m -> {:.2f} gigapixels "
                   "at {} m".format(width, height, cells / 1e9, resolution))
 
     if cells <= MAX_RASTER_CELLS:
-        return
+        return None
 
-    raise WorkflowError(
-        "Refusing to build a DEM of about {:.0f} gigapixels ({:.0f} m x "
-        "{:.0f} m at {} m resolution).\n\n"
+    return (
+        "This chunk's scale implies a plot of {:.0f} m x {:.0f} m, which at "
+        "{} m resolution would be a DEM of about {:.0f} gigapixels -- "
+        "hundreds of gigabytes of memory. Alignment and the mesh are complete "
+        "and have been saved.\n\n"
         "A reef plot this size is almost certainly a scaling problem rather "
         "than a real survey extent. Check that:\n"
         "  - the scalebar file matches the targets actually in this chunk\n"
         "  - all four corner markers were detected and correctly numbered\n"
         "  - the georeferencing file's column layout is set correctly\n\n"
-        "Building this raster would need hundreds of gigabytes of memory."
-        .format(cells / 1e9, width, height, resolution))
+        "Correct the referencing, then re-run to continue from the DEM "
+        "onwards.".format(width, height, resolution, cells / 1e9))
 
 
 def clean_project(chunk):
@@ -848,8 +844,19 @@ def run_workflow(doc, chunk, settings, reporter=None):
         reporter.info("Exiting workflow for manual referencing")
         return WorkflowResult(STOPPED_FOR_MANUAL_REFERENCING, warnings, outputs)
 
+    # Referencing may have been attempted and not worked -- markers missed,
+    # scalebar targets absent from the photos, a mis-set column layout. Stop
+    # here rather than fail: the alignment and mesh above are the expensive
+    # part, they are saved, and they stay valid. A re-run after the user fixes
+    # the referencing picks up from the DEM.
+    problem = referencing_problem(chunk, ortho_res, reporter)
+    if problem:
+        warnings.append(problem)
+        reporter.warn(problem)
+        reporter.info("Exiting workflow for manual referencing")
+        return WorkflowResult(STOPPED_FOR_MANUAL_REFERENCING, warnings, outputs)
+
     if chunk.elevation is None:
-        check_raster_sanity(chunk, ortho_res, reporter)
         reporter.step("Building DEM")
         chunk.buildDem(source_data=Metashape.ModelData,
                        interpolation=Metashape.EnabledInterpolation,
@@ -899,7 +906,12 @@ def run_workflow(doc, chunk, settings, reporter=None):
 
     # ---------------- 3. Export ----------------
 
-    taglab_clip = True
+    # TagLab products are only useful clipped to the plot -- an uncropped one
+    # carries the whole survey's overshoot and would have to be re-exported
+    # before it could be annotated. So a missing boundary skips that export
+    # rather than producing something misleading, and rather than failing a
+    # run whose other outputs are perfectly good.
+    export_taglab = settings.export_taglab
     if not has_boundary:
         warnings.append(
             "Boundary polygon could not be created automatically -- corner "
@@ -908,16 +920,13 @@ def run_workflow(doc, chunk, settings, reporter=None):
             "06 (corner markers) or script 08 (from camera footprints) and "
             "re-run this workflow.".format(settings.corner_markers))
 
-        if settings.export_taglab:
-            if not reporter.confirm_uncropped_taglab(settings):
-                raise WorkflowError(
-                    "TagLab outputs were requested but this chunk has no "
-                    "boundary polygon to clip them to. Either create a "
-                    "boundary (scripts 06 or 08), turn off TagLab outputs, or "
-                    "allow uncropped TagLab exports.")
-            taglab_clip = False
-            warnings.append("TagLab outputs were exported uncropped because "
-                            "no boundary polygon was available.")
+        if export_taglab:
+            export_taglab = False
+            warnings.append(
+                "TagLab outputs were skipped: they must be clipped to the "
+                "plot boundary, and no boundary polygon was available. "
+                "Everything else was exported. Create a boundary and re-run "
+                "to produce them.")
 
     jpg = Metashape.ImageCompression()
     jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG
@@ -995,7 +1004,7 @@ def run_workflow(doc, chunk, settings, reporter=None):
                 save_attributes=True)
             outputs.append(shape_path)
 
-    if settings.export_taglab:
+    if export_taglab:
         taglab_dir = os.path.join(output_dir, "taglab_outputs")
         os.makedirs(taglab_dir, exist_ok=True)
 
@@ -1009,7 +1018,7 @@ def run_workflow(doc, chunk, settings, reporter=None):
             save_kml=False, save_world=False, save_scheme=False,
             save_alpha=True, image_description="", network_links=True,
             global_profile=False, min_zoom_level=-1, max_zoom_level=-1,
-            white_background=True, clip_to_boundary=taglab_clip,
+            white_background=True, clip_to_boundary=True,
             title="Orthomosaic", description="Generated by Agisoft Metashape",
             progress=reporter.progress_callback())
         outputs.append(taglab_ortho)
@@ -1024,7 +1033,7 @@ def run_workflow(doc, chunk, settings, reporter=None):
             save_kml=False, save_world=False, save_scheme=False,
             save_alpha=True, image_description="", network_links=True,
             global_profile=False, min_zoom_level=-1, max_zoom_level=-1,
-            white_background=True, clip_to_boundary=taglab_clip, title="DEM",
+            white_background=True, clip_to_boundary=True, title="DEM",
             description="Generated by Agisoft Metashape",
             progress=reporter.progress_callback())
         outputs.append(taglab_dem)

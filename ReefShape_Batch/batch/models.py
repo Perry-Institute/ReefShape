@@ -175,17 +175,15 @@ class ExportSettings:
     `output_dir` empty means "alongside the project file", matching the
     dialog's "Defaults to project location".
 
-    `taglab_allow_uncropped` replaces an interactive question. Script 01 stops
-    and asks when TagLab outputs are requested but no boundary polygon exists;
-    a batch has nobody to ask, so the answer becomes a setting. True keeps the
-    batch moving and records a warning; False fails the job so a plot never
-    silently produces uncropped TagLab products.
+    `taglab_outputs` additionally requires a boundary polygon: TagLab products
+    are only useful clipped to the plot, so without a boundary they are
+    skipped with a warning rather than exported uncropped. The rest of the
+    run still completes.
     """
     output_dir: str = ""
     report: bool = True
     gis_outputs: bool = True
     taglab_outputs: bool = True
-    taglab_allow_uncropped: bool = True
 
 
 @dataclass
@@ -250,7 +248,16 @@ FAILED = "failed"
 CANCELLED = "cancelled"
 SKIPPED = "skipped"
 
-TERMINAL_STATUSES = (DONE, FAILED, CANCELLED, SKIPPED)
+# Alignment and the mesh completed and are saved, but referencing did not work
+# so the DEM onwards could not be built. Deliberately not FAILED: the expensive
+# work survived, the rest of the batch is unaffected, and once the user adds
+# the scaling and georeferencing information a re-run resumes from the DEM.
+NEEDS_REFERENCING = "needs_referencing"
+
+TERMINAL_STATUSES = (DONE, FAILED, CANCELLED, SKIPPED, NEEDS_REFERENCING)
+
+# Statuses that did not go wrong, for "did the batch succeed?" reporting.
+OK_STATUSES = (DONE, NEEDS_REFERENCING, SKIPPED)
 
 
 @dataclass
@@ -492,10 +499,10 @@ def validate_job(job: Job) -> List[Issue]:
     if not (job.export.report or job.export.gis_outputs or job.export.taglab_outputs):
         warn("No outputs selected: the project will be processed but nothing "
              "will be exported.")
-    if (job.export.taglab_outputs and not job.export.taglab_allow_uncropped
-            and not job.georef.enabled and job.kind == NEW_PLOT):
-        warn("TagLab outputs require a boundary polygon, which needs "
-             "georeferencing. This job will fail at the export step.")
+    if (job.export.taglab_outputs and not job.georef.enabled
+            and job.kind == NEW_PLOT):
+        warn("TagLab outputs need a boundary polygon, which needs "
+             "georeferencing. They will be skipped for this job.")
 
     if job.processing.use_default_resolution is False and \
             job.processing.ortho_resolution <= 0:

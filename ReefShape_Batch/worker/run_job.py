@@ -248,6 +248,11 @@ def main(argv):
     try:
         apply_resource_limits(job)
         result = run(job, reporter)
+        # A run that stopped for manual referencing is *not* a failure: the
+        # alignment and mesh are done and saved, and the remaining stages
+        # resume cheaply once the user supplies the referencing. Reporting it
+        # as ok keeps it out of the batch's failure count and stops
+        # stop-on-error from halting a queue over it.
         outcome.update({
             "ok": True,
             "status": result.status,
