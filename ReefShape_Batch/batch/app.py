@@ -13,6 +13,7 @@ with PySide installed also works -- see `batch.qt`.
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 
@@ -154,11 +155,18 @@ def main(argv=None):
     for label, value in environment_rows(install):
         print("{:22} {}".format(label + ":", value))
 
-    # TODO(main-window): replace with MainWindow once the job table lands.
-    # Until then the diagnostics dialog is the startup surface -- it proves
-    # the Qt bootstrap and Metashape discovery both work on this machine.
-    show_diagnostics(install=install)
-    return 0
+    from .ui.main_window import MainWindow
+    window = MainWindow(install=install)
+    window.show()
+
+    # Open a batch passed on the command line, so a .rsbatch can be associated
+    # with the app and double-clicked.
+    for argument in argv[1:]:
+        if argument.lower().endswith(".rsbatch") and os.path.isfile(argument):
+            window._load_batch(argument)
+            break
+
+    return app.exec_() if hasattr(app, "exec_") else app.exec()
 
 
 if __name__ == "__main__":
