@@ -93,19 +93,22 @@ def filter_to_enabled_markers(reference_chunk, path):
     off-by-one here would misassign every reference coordinate in the chunk,
     which is a bad thing to leave resting on an assumption.
     """
-    # Scalebar targets are excluded regardless of their reference flag. A
-    # scalebar is repositioned on every visit, so its markers are never in the
-    # same place twice; using one as an alignment reference would pull the new
-    # timepoint toward a position that has genuinely moved. In a
-    # ReefShape-conventional project they are already reference-disabled and
-    # this changes nothing, but a project set up by hand may not be, and the
-    # failure is silent -- a subtly warped mosaic, not an error.
-    scalebar_labels = scalebar_marker_labels(reference_chunk)
-
+    # The reference flag is the sole criterion, deliberately.
+    #
+    # An earlier version also excluded any marker belonging to a scalebar, on
+    # the reasoning that scalebars are repositioned every visit. That is wrong
+    # for a common setup: where no permanent corner markers are installed,
+    # people place temporary targets at the corners and use them for *both*
+    # scaling and georeferencing. Those targets are double-duty -- part of a
+    # scalebar and carrying real georeference information -- and excluding
+    # them would throw away the only control points the plot has.
+    #
+    # `reference.enabled` already distinguishes the two cases: a
+    # scaling-only target is not reference-enabled, a double-duty one is.
     enabled = {}
     for marker in reference_chunk.markers:
         try:
-            if marker.reference.enabled and marker.label not in scalebar_labels:
+            if marker.reference.enabled:
                 enabled[marker.label] = marker
         except AttributeError:
             continue

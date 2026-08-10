@@ -176,6 +176,17 @@ class JobEditor(QtWidgets.QDialog):
         layout.addWidget(QtWidgets.QLabel(
             "Damaged or moved markers (tick any target that shifted between "
             "visits -- they are kept but not trusted for alignment):"))
+
+        self.show_all_markers = QtWidgets.QCheckBox("List all markers")
+        self.show_all_markers.setToolTip(
+            "By default, targets that only carry scale (part of a scalebar, "
+            "with no georeference information) are hidden -- scalebars are "
+            "repositioned every visit and are never used to align timepoints.\n\n"
+            "Tick this to see every marker in the chunk regardless.")
+        self.show_all_markers.toggled.connect(
+            lambda _on: self._on_reference_changed())
+        layout.addWidget(self.show_all_markers)
+
         self.markers_list = QtWidgets.QListWidget()
         self.markers_list.setMaximumHeight(130)
         self.markers_list.setSelectionMode(
@@ -412,10 +423,25 @@ class JobEditor(QtWidgets.QDialog):
 
         if job.kind == REPHOTO:
             job.reference_chunk = self.ref_combo.currentText()
-            job.damaged_markers = [
-                self.markers_list.item(i).text()
-                for i in range(self.markers_list.count())
-                if self.markers_list.item(i).checkState() == QtCore.Qt.Checked]
+            # Read the label from item data, not the visible text -- the text
+            # carries a "(scalebar only)" style annotation.
+            #
+            # Ticked markers that are currently filtered out of the list are
+            # preserved: hiding a marker must not silently un-flag it as
+            # damaged, or toggling "List all markers" would quietly change the
+            # job.
+            visible, ticked = set(), []
+            for i in range(self.markers_list.count()):
+                item = self.markers_list.item(i)
+                label = item.data(QtCore.Qt.UserRole)
+                if not label:
+                    continue
+                visible.add(label)
+                if item.checkState() == QtCore.Qt.Checked:
+                    ticked.append(label)
+            retained = [m for m in (job.damaged_markers or [])
+                        if m not in visible]
+            job.damaged_markers = ticked + retained
 
     # -- slots --
 
@@ -465,37 +491,63 @@ class JobEditor(QtWidgets.QDialog):
         self._adopt_reference_crs(chunk)
         self._show_reference_settings(chunk)
 
-        # Scalebar targets are left out entirely. A scalebar is repositioned
-        # on every visit, so its markers are never in the same place twice;
-        # they play no part in alignment, and listing them as candidates for
-        # "did this move?" invites a pointless decision whose answer is always
-        # yes.
+        # Hide targets that carry scale but no georeference -- a scalebar is
+        # repositioned every visit, so asking whether one moved has only one
+        # possible answer.
+        #
+        # Crucially this is not "hide scalebar markers". Where no permanent
+        # corner markers are installed, people place temporary targets at the
+        # corners and use them for both scaling and georeferencing. Those are
+        # double-duty: part of a scalebar *and* carrying real reference
+        # information, and they are exactly the control points alignment
+        # depends on. reference_enabled is what tells the two apart, and it is
+        # the same flag the alignment itself filters on.
+        show_all = self.show_all_markers.isChecked()
         previously = set(self.job.damaged_markers or [])
-        listed = 0
+        listed = hidden = 0
+
         for marker in chunk.get("markers", []):
-            if marker.get("in_scalebar"):
+            scaling_only = (marker.get("in_scalebar")
+                            and not marker.get("reference_enabled"))
+            if scaling_only and not show_all:
+                hidden += 1
                 continue
-            item = QtWidgets.QListWidgetItem(marker.get("label", ""))
+
+            label = marker.get("label", "")
+            item = QtWidgets.QListWidgetItem(label)
+            # The displayed text gets a suffix below; keep the real label in
+            # item data so saving the job records the marker name and not the
+            # annotation.
+            item.setData(QtCore.Qt.UserRole, label)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked
-                               if marker.get("label") in previously
+            item.setCheckState(QtCore.Qt.Checked if label in previously
                                else QtCore.Qt.Unchecked)
-            if not marker.get("reference_enabled"):
-                item.setToolTip("Not enabled for referencing in this chunk, "
-                                "so it will not be used for alignment anyway.")
+
+            if scaling_only:
+                item.setText(label + "   (scalebar only)")
+                item.setToolTip(
+                    "Part of a scalebar with no georeference information, so "
+                    "it is not used to align timepoints.")
+            elif marker.get("in_scalebar"):
+                item.setText(label + "   (georeferenced + scalebar)")
+                item.setToolTip(
+                    "Used for both scaling and georeferencing, so it does "
+                    "take part in alignment.")
+            elif not marker.get("reference_enabled"):
+                item.setToolTip(
+                    "Not enabled for referencing in this chunk, so it will "
+                    "not be used for alignment anyway.")
             self.markers_list.addItem(item)
             listed += 1
 
-        hidden = len(chunk.get("scalebar_markers", []))
         if not listed:
-            item = QtWidgets.QListWidgetItem(
-                "No alignment markers in this chunk")
+            item = QtWidgets.QListWidgetItem("No markers to list")
             item.setFlags(QtCore.Qt.NoItemFlags)
             self.markers_list.addItem(item)
-        self.markers_list.setToolTip(
-            "{} scalebar target(s) are not listed: scalebars are moved between "
-            "visits, so they are never used to align timepoints."
-            .format(hidden) if hidden else "")
+
+        self.show_all_markers.setText(
+            "List all markers ({} scalebar-only target(s) hidden)".format(hidden)
+            if hidden else "List all markers")
         self._revalidate()
 
     def _refresh_reference_settings(self):
