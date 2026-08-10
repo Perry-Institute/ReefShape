@@ -18,12 +18,15 @@ so that they align pixel-to-pixel with those from the first, even though the act
 '''
 
 import Metashape
+import os
 from os import path
 import sys
 import csv
 import re
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
+import reefshape_align
+from reefshape_core import Reporter, WorkflowError
 
 
 class AlignChunksDlg(QtWidgets.QDialog):
@@ -233,77 +236,37 @@ class AlignChunksDlg(QtWidgets.QDialog):
 
     def _alignChunksImpl(self):
         '''
-        Contains main workflow
+        Gather the user's choices, then hand the alignment to reefshape_align.
+        That module is shared with the headless batch runner so the menu
+        script and a batched re-photography job align timepoints identically.
         '''
         print("Script started...")
         self.setEnabled(False)
 
-        if(len(self.doc.chunks) < 2):
-            Metashape.app.messageBox("Unable to align chunks: Please create a second chunk to align")
+        if len(self.doc.chunks) < 2:
+            Metashape.app.messageBox(
+                "Unable to align chunks: Please create a second chunk to align")
             self.setEnabled(True)
             return
 
-        est_ref_path = os.path.join(self.project_folder, self.reference_chunk.label + "_est_ref.csv")
-        # export estimated reference from old chunk - in decimal degrees, 9 decimal places is about 0.1mm
-        self.reference_chunk.exportReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV,
-                            items = Metashape.ReferenceItemsMarkers, columns = 'nouvwUVW', delimiter = ",", precision = 9)
-
-        self.correctEnabledMarkers(est_ref_path)
-
-        # detect markers in new chunk
-        if(len(self.chunk.markers) == 0): # only detect markers if there are currently no markers in selected chunk
-            self.chunk.detectMarkers(target_type = self.target_type, tolerance=20, filter_mask=False, inverted=False, noparity=False, maximum_residual=5, minimum_size=0, minimum_dist=5)
-
-        # import reference to new chunk
-        self.chunk.importReference(path = est_ref_path, format = Metashape.ReferenceFormatCSV, delimiter = ',', columns = "noxyz", skip_rows = 1,
-                              crs = self.reference_chunk.crs, ignore_labels=False, create_markers=False, threshold=0.1, shutter_lag=0)
-
-        # adjust accuracy for damaged markers - accuracy is set in meters
-        for marker in self.chunk.markers:
-            marker.reference.accuracy = [0.0001, 0.0001, 0.0001]
-            for damaged_marker in self.damaged_markers:
-                if(marker.label == damaged_marker.label):
-                    marker.reference.accuracy = [1, 1, 1]
-
-        self.chunk.updateTransform()
-
-        # Copy the outer boundary polygon from the reference chunk so the full
-        # workflow can skip boundary regeneration when it runs on this chunk.
-        # No-op if the reference chunk has no outer boundary, or if the target
-        # chunk already has one (e.g. from a previous align_timepoints run).
-        self.copyOuterBoundary()
+        try:
+            reefshape_align.align_timepoints(
+                doc=self.doc,
+                reference_chunk=self.reference_chunk,
+                chunk=self.chunk,
+                target_type=self.target_type,
+                damaged_markers=[m.label for m in self.damaged_markers if m],
+                reporter=Reporter(),
+            )
+        except WorkflowError as err:
+            Metashape.app.messageBox(str(err))
+            print("Script aborted")
+            self.setEnabled(True)
+            return
 
         self.updateAndSave()
         self.reject()
 
-    def copyOuterBoundary(self):
-        '''
-        Copies the OuterBoundary polygon (if any) from self.reference_chunk into
-        self.chunk. Mirrors the logic in 06_copy_boundary.py so users get the
-        same result whether they invoke the standalone tool or rely on Align
-        Timepoints to do it automatically.
-        '''
-        if not self.reference_chunk.shapes:
-            return
-        source_outer = next(
-            (s for s in self.reference_chunk.shapes
-             if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary),
-            None
-        )
-        if source_outer is None:
-            return
-        if self.chunk.shapes:
-            for s in self.chunk.shapes:
-                if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary:
-                    return  # target already has an outer boundary; leave it alone
-        else:
-            self.chunk.shapes = Metashape.Shapes()
-            self.chunk.shapes.crs = self.reference_chunk.shapes.crs
-        copied = self.chunk.shapes.addShape()
-        copied.label = "Copied Boundary"
-        copied.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
-        copied.geometry = source_outer.geometry
-        print(" --- Outer boundary copied from reference chunk --- ")
 
     def updateAndSave(self):
         ''' saves changes to the project and updates the user interface '''
@@ -429,39 +392,6 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.target_type = self.targetTypes[target_type_index][1]
 
 
-    def correctEnabledMarkers(self, path):
-        '''
-        Edits the estimated reference file so that only markers used for georeferencing in
-        time point 1 are used to align time point 2.
-        Currently, this functionality is broken in metashape, and all markers are marked as
-        enabled.
-        '''
-        # read in raw georeferencing data and put it in a list
-        file = open(path)
-        eof = False
-        header = file.readline() # skip first header containing crs info
-        header = file.readline()
-        ref = [header.split(sep = ",")] # save second header line containing column headers
-        line = file.readline()
-        index = 0 # use marker index to match file lines with markers - Metashape exports markers in the order of their indices
-
-        while not eof:
-            marker_ref = line.split(sep = ",")
-            if(self.reference_chunk.markers[index].reference.enabled):
-                ref.append(marker_ref)
-            # marker_ref[1] = int(self.reference_chunk.markers[index].reference.enabled) # rewrite enabled flag
-            line = file.readline()
-            index += 1
-            if (index >= len(self.reference_chunk.markers) or not len(line)):
-                eof = True
-                break
-        file.close()
-        # write edited reference info back to the file
-        with open(path, 'w', newline = '') as f:
-            writer = csv.writer(f)
-            writer.writerows(ref)
-        f.close()
-    
     def closeEvent(self, event):
         self.reject()
         event.accept()

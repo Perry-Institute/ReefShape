@@ -42,6 +42,7 @@ for candidate in (os.path.join(_REPO, "ReefShape_Scripts"),
 sys.path.insert(0, _ROOT)
 
 import reefshape_core                                    # noqa: E402
+import reefshape_align                                   # noqa: E402
 from reefshape_core import WorkflowSettings, WorkflowError  # noqa: E402
 from batch import protocol                               # noqa: E402
 
@@ -212,17 +213,38 @@ def run(job, reporter):
     add_photos(chunk, job, reporter)
     doc.save()
 
-    if job.get("kind") == "rephoto":
-        # Timepoint alignment is a separate extraction (rs_align), not yet
-        # wired in. Failing loudly beats silently processing a revisit as if
-        # it were a brand new plot, which would produce products that do not
-        # line up with the earlier timepoint.
-        raise WorkflowError(
-            "Re-photography jobs are not supported by this build yet. "
-            "The timepoint alignment step is still being extracted from "
-            "02_align_chunks.py.")
-
     settings = WorkflowSettings.from_job_dict(job)
+
+    if job.get("kind") == "rephoto":
+        reference_label = job.get("reference_chunk", "")
+        reference_chunk = next(
+            (c for c in doc.chunks if c.label == reference_label), None)
+        if reference_chunk is None:
+            raise WorkflowError(
+                "Reference chunk {!r} was not found in {}. Available chunks: "
+                "{}".format(reference_label, job["project_path"],
+                            ", ".join(repr(c.label) for c in doc.chunks)))
+
+        # Skipping when the chunk is already referenced is what lets a
+        # re-photography job resume: alignment is not idempotent in the way
+        # the workflow's stages are, and re-importing over an already-aligned
+        # chunk would reset accuracies that may have been adjusted since.
+        already_aligned = any(
+            m.reference.location is not None for m in chunk.markers
+            if m.reference)
+        if already_aligned:
+            reporter.info("Chunk is already referenced; skipping timepoint "
+                          "alignment.")
+        else:
+            reefshape_align.align_timepoints(
+                doc=doc,
+                reference_chunk=reference_chunk,
+                chunk=chunk,
+                target_type=settings.resolve_target_type(),
+                damaged_markers=job.get("damaged_markers") or [],
+                reporter=reporter,
+            )
+
     return reefshape_core.run_workflow(doc, chunk, settings, reporter)
 
 
