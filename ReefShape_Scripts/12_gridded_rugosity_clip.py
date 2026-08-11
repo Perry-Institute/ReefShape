@@ -67,7 +67,7 @@ ROW_STRIP_MODEL_LABEL_PREFIX = "Rugosity row"  # so we can find/delete strays
 # Error dialog
 # ---------------------------------------------------------------------------
 
-def _show_error(parent, title, msg):
+def _grx_show_error(parent, title, msg):
     box = QtWidgets.QMessageBox(parent)
     box.setIcon(QtWidgets.QMessageBox.Critical)
     box.setWindowTitle("Error")
@@ -80,7 +80,7 @@ def _show_error(parent, title, msg):
 # Progress dialog
 # ---------------------------------------------------------------------------
 
-class _ProgressDialog(QtWidgets.QDialog):
+class _GriddedRugosityExactProgressDialog(QtWidgets.QDialog):
     """Progress dialog with a status label, cell counter, elapsed/ETA
     readouts, and a determinate progress bar.
 
@@ -194,7 +194,7 @@ def _fmt_seconds(s):
 # Boundary + raster helpers (shared shape with 11's implementation)
 # ---------------------------------------------------------------------------
 
-def _extract_boundary_ring(geom):
+def _grx_extract_boundary_ring(geom):
     """Return the outer ring of a polygon geometry as a list of Metashape
     Vectors. Handles both nested-ring (list-of-list-of-Vector) and flat
     (list-of-Vector) conventions — different Metashape versions / shape
@@ -211,7 +211,7 @@ def _extract_boundary_ring(geom):
     raise RuntimeError("Could not interpret boundary polygon coordinate format.")
 
 
-def _import_raster_to_chunk(chunk, path, label):
+def _grx_import_raster_to_chunk(chunk, path, label):
     """Import `path` as an Elevation product in `chunk` and label it.
 
     Records existing elevation keys, calls importRaster, then finds the
@@ -245,7 +245,7 @@ def _import_raster_to_chunk(chunk, path, label):
     return new_elev
 
 
-def _format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
+def _grx_format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
     """Build the summary text used by both the completion popup and the
     optional sibling .txt file. Shared to keep on-screen and on-disk
     records identical.
@@ -268,7 +268,7 @@ def _format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
     return '\n'.join(lines)
 
 
-def write_geotiff(path, data, transform, crs_wkt):
+def _grx_write_geotiff(path, data, transform, crs_wkt):
     """Write a single-band float32 GeoTIFF with LZW compression."""
     with rasterio.open(
         path, "w", driver="GTiff",
@@ -316,7 +316,7 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
     guaranteed to be a QDialog subclass in every version.
 
     We deliberately skip anything whose title contains 'rugosity' so
-    the script's own _ProgressDialog isn't caught.
+    the script's own _GriddedRugosityExactProgressDialog isn't caught.
 
     First few matches print a one-line diagnostic identifying the widget
     class and title, so if this doesn't work as expected we can see
@@ -400,7 +400,7 @@ class _DuplicateModelDialogSuppressor(QtCore.QObject):
         return False
 
     def _refocusOwnDialog(self):
-        """Find the script's _ProgressDialog among top-level widgets
+        """Find the script's _GriddedRugosityExactProgressDialog among top-level widgets
         (by title match on 'gridded rugosity') and re-raise it, so
         Metashape's just-shown invisible popup doesn't hold focus."""
         try:
@@ -610,7 +610,7 @@ def compute_gridded_rugosity_exact(chunk, boundary, cell_size_m,
 
     # --- 1. Boundary polygon + bbox + reference Z ---
     _step("Reading boundary polygon…", 0.02)
-    ring = _extract_boundary_ring(boundary.geometry)
+    ring = _grx_extract_boundary_ring(boundary.geometry)
     boundary_xy = np.array([(v.x, v.y) for v in ring], dtype=np.float64)
     if len(boundary_xy) < 3:
         raise RuntimeError("Boundary polygon has fewer than 3 vertices.")
@@ -1065,7 +1065,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            _show_error(self, "Gridded rugosity (exact) failed", str(e))
+            _grx_show_error(self, "Gridded rugosity (exact) failed", str(e))
             self.setEnabled(True)
 
     def _runImpl(self):
@@ -1117,7 +1117,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
             project_name, chunk_label, cell_size_cm)
 
         self.setEnabled(False)
-        progress = _ProgressDialog(self, "Gridded Rugosity (Exact)")
+        progress = _GriddedRugosityExactProgressDialog(self, "Gridded Rugosity (Exact)")
         progress.show()
         QtWidgets.QApplication.processEvents()
 
@@ -1153,10 +1153,10 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
                 return
 
             progress.set_status("Writing GeoTIFF…")
-            write_geotiff(temp_path, data, transform, crs_wkt)
+            _grx_write_geotiff(temp_path, data, transform, crs_wkt)
 
             progress.set_status("Importing into chunk as DEM…")
-            new_elev = _import_raster_to_chunk(
+            new_elev = _grx_import_raster_to_chunk(
                 self.chunk, temp_path, raster_label)
             if new_elev is None:
                 print("  WARNING: importRaster succeeded but no new elevation "
@@ -1171,7 +1171,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
                 print("  saved to: {}".format(disk_path))
                 if save_stats:
                     stats_path = os.path.splitext(disk_path)[0] + ".txt"
-                    stats_body = _format_stats_text(
+                    stats_body = _grx_format_stats_text(
                         raster_label, cell_size_m, stats, disk_path=disk_path)
                     with open(stats_path, "w", encoding="utf-8") as f:
                         f.write(stats_body)
@@ -1185,7 +1185,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
                                            stats["min"], stats["max"]))
                 print("  global rugosity: {:.3f}".format(stats["global"]))
 
-            summary = _format_stats_text(
+            summary = _grx_format_stats_text(
                 raster_label, cell_size_m, stats, disk_path=disk_path)
             if stats_path:
                 summary += "\nStats text: {}".format(stats_path)

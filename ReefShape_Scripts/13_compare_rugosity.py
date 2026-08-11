@@ -172,7 +172,7 @@ def _verify_source_grids_match(new_elev, ref_elev):
                 "chunks, then re-run 11/12.".format(attr, n, r))
 
 
-def _import_raster_to_chunk(chunk, path, label):
+def _cr_import_raster_to_chunk(chunk, path, label):
     """Import `path` as an Elevation product in `chunk` and rename it to
     `label`. Preserves the previously-active elevation so the newly
     imported raster coexists with (rather than replaces) the chunk's
@@ -214,7 +214,7 @@ def _import_raster_to_chunk(chunk, path, label):
     return new_elev
 
 
-def write_geotiff(path, data, transform, crs_wkt):
+def _cr_write_geotiff(path, data, transform, crs_wkt):
     """Write a single-band float32 GeoTIFF with our nodata sentinel."""
     profile = {
         "driver": "GTiff",
@@ -324,11 +324,11 @@ def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
     # Ref array gets written as a stand-alone GeoTIFF so it can be
     # imported into the active chunk and viewed alongside the new
     # rugosity + delta. Same grid → aligns perfectly.
-    write_geotiff(ref_path, ref_arr, transform, crs_wkt)
-    write_geotiff(delta_path, delta, transform, crs_wkt)
+    _cr_write_geotiff(ref_path, ref_arr, transform, crs_wkt)
+    _cr_write_geotiff(delta_path, delta, transform, crs_wkt)
     # Also write the new-arr sample for debugging — unused by the
     # dialog, but useful when diffing against exportRaster's output.
-    write_geotiff(new_path, new_arr, transform, crs_wkt)
+    _cr_write_geotiff(new_path, new_arr, transform, crs_wkt)
 
     return delta_path, ref_path, cell_size_m, stats
 
@@ -337,7 +337,7 @@ def compute_rugosity_delta(active_chunk, ref_chunk, new_elev, ref_elev,
 # Text output helpers
 # ---------------------------------------------------------------------------
 
-def _format_stats_text(new_chunk_label, ref_chunk_label, cell_size_m, stats,
+def _cr_format_stats_text(new_chunk_label, ref_chunk_label, cell_size_m, stats,
                        disk_path=None):
     lines = [
         "Rugosity change: {} vs {} (reference)".format(
@@ -374,7 +374,7 @@ def _format_stats_text(new_chunk_label, ref_chunk_label, cell_size_m, stats,
 # Progress dialog
 # ---------------------------------------------------------------------------
 
-class _ProgressDialog(QtWidgets.QDialog):
+class _CompareRugosityProgressDialog(QtWidgets.QDialog):
     """Small indeterminate-progress dialog. Compare is fast (I/O bound,
     a few seconds even on large plots) so we don't need per-cell
     counters or an ETA — just a status label and a busy indicator."""
@@ -640,7 +640,7 @@ class CompareRugosityDlg(QtWidgets.QDialog):
         new_chunk_label = self.active_chunk.label or "chunk"
 
         self.setEnabled(False)
-        progress = _ProgressDialog(self, "Compare Rugosity")
+        progress = _CompareRugosityProgressDialog(self, "Compare Rugosity")
         progress.show()
         QtWidgets.QApplication.processEvents()
 
@@ -662,7 +662,7 @@ class CompareRugosityDlg(QtWidgets.QDialog):
             progress.set_status("Importing reference DEM into active chunk…")
             ref_label = "{} ({:.2f}m, from: {})".format(
                 RASTER_LABEL_PREFIX_REF, cell_size_m, ref_chunk_label)
-            imported_ref = _import_raster_to_chunk(
+            imported_ref = _cr_import_raster_to_chunk(
                 self.active_chunk, ref_path, ref_label)
             if imported_ref is None:
                 print("  WARNING: reference raster imported but no new "
@@ -672,7 +672,7 @@ class CompareRugosityDlg(QtWidgets.QDialog):
             progress.set_status("Importing delta DEM into active chunk…")
             delta_label = "{} ({:.2f}m, vs: {})".format(
                 RASTER_LABEL_PREFIX_DELTA, cell_size_m, ref_chunk_label)
-            imported_delta = _import_raster_to_chunk(
+            imported_delta = _cr_import_raster_to_chunk(
                 self.active_chunk, delta_path, delta_label)
             if imported_delta is None:
                 print("  WARNING: delta raster imported but no new "
@@ -696,7 +696,7 @@ class CompareRugosityDlg(QtWidgets.QDialog):
                 print("  saved to: {}".format(disk_path))
                 if save_stats:
                     stats_path = os.path.splitext(disk_path)[0] + ".txt"
-                    body = _format_stats_text(
+                    body = _cr_format_stats_text(
                         new_chunk_label, ref_chunk_label, cell_size_m,
                         stats, disk_path=disk_path)
                     with open(stats_path, "w", encoding="utf-8") as f:
@@ -713,7 +713,7 @@ class CompareRugosityDlg(QtWidgets.QDialog):
                 print("  range: {:+.3f} to {:+.3f}".format(
                     stats["min"], stats["max"]))
 
-            summary = _format_stats_text(
+            summary = _cr_format_stats_text(
                 new_chunk_label, ref_chunk_label, cell_size_m, stats,
                 disk_path=disk_path)
             if stats_path:

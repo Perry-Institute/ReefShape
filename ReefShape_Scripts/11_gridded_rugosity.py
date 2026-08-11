@@ -80,7 +80,7 @@ NODATA = -9999.0
 RASTER_LABEL_PREFIX = "Rugosity"  # final label is e.g. "Rugosity (1.0m grid)"
 
 
-def _show_error(parent, title, msg):
+def _gr_show_error(parent, title, msg):
     box = QtWidgets.QMessageBox(parent)
     box.setIcon(QtWidgets.QMessageBox.Critical)
     box.setWindowTitle("Error")
@@ -93,7 +93,7 @@ def _show_error(parent, title, msg):
 # Progress dialog
 # ---------------------------------------------------------------------------
 
-class _ProgressDialog(QtWidgets.QDialog):
+class _GriddedRugosityProgressDialog(QtWidgets.QDialog):
     """Plain QDialog with a status label and determinate progress bar.
 
     Built by hand (not QProgressDialog) for the same reason pip_auto_install
@@ -151,7 +151,7 @@ class _ProgressDialog(QtWidgets.QDialog):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_boundary_ring(geom):
+def _gr_extract_boundary_ring(geom):
     """Return the outer ring of a polygon geometry as a list of Metashape
     Vectors. Handles both nested-ring (list-of-list-of-Vector) and flat
     (list-of-Vector) conventions — different Metashape versions / shape
@@ -168,7 +168,7 @@ def _extract_boundary_ring(geom):
     raise RuntimeError("Could not interpret boundary polygon coordinate format.")
 
 
-def _import_raster_to_chunk(chunk, path, label):
+def _gr_import_raster_to_chunk(chunk, path, label):
     """Import `path` as an Elevation product in `chunk` and label it.
 
     Records the existing elevations' keys, calls importRaster, then finds
@@ -254,7 +254,7 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
 
     # --- 1. Boundary outer ring in shape CRS (XY) ---
     _step("Reading boundary polygon…", 0.02)
-    ring = _extract_boundary_ring(boundary.geometry)
+    ring = _gr_extract_boundary_ring(boundary.geometry)
     boundary_xy = np.array([(v.x, v.y) for v in ring], dtype=np.float64)
     if len(boundary_xy) < 3:
         raise RuntimeError("Boundary polygon has fewer than 3 vertices.")
@@ -584,7 +584,7 @@ def compute_gridded_rugosity(chunk, boundary, cell_size_m, progress=None):
     return rugosity_out, transform, shape_crs.wkt, stats
 
 
-def write_geotiff(path, data, transform, crs_wkt):
+def _gr_write_geotiff(path, data, transform, crs_wkt):
     """Write a single-band float32 GeoTIFF with LZW compression."""
     with rasterio.open(
         path,
@@ -602,7 +602,7 @@ def write_geotiff(path, data, transform, crs_wkt):
         dst.write(data, 1)
 
 
-def _format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
+def _gr_format_stats_text(raster_label, cell_size_m, stats, disk_path=None):
     '''Build the human-readable summary used by both the completion popup
     and the (optional) sibling .txt file. Centralised so the popup and the
     on-disk record can't drift apart — the popup is what users see in the
@@ -799,7 +799,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            _show_error(self, "Gridded rugosity failed", str(e))
+            _gr_show_error(self, "Gridded rugosity failed", str(e))
             self.setEnabled(True)
 
     def _runImpl(self):
@@ -857,7 +857,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
             project_name, chunk_label, cell_size_cm)
 
         self.setEnabled(False)
-        progress = _ProgressDialog(self, "Gridded Rugosity")
+        progress = _GriddedRugosityProgressDialog(self, "Gridded Rugosity")
         progress.show()
         QtWidgets.QApplication.processEvents()
 
@@ -873,11 +873,11 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
 
             progress.set_status("Writing GeoTIFF…")
             progress.set_progress(0.95)
-            write_geotiff(temp_path, data, transform, crs_wkt)
+            _gr_write_geotiff(temp_path, data, transform, crs_wkt)
 
             progress.set_status("Importing into chunk as DEM…")
             progress.set_progress(0.98)
-            new_elev = _import_raster_to_chunk(self.chunk, temp_path, raster_label)
+            new_elev = _gr_import_raster_to_chunk(self.chunk, temp_path, raster_label)
             if new_elev is None:
                 print("  WARNING: importRaster succeeded but no new elevation "
                       "entry was found in the chunk. Skipping rename.")
@@ -899,7 +899,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                     # complete record without round-tripping through the
                     # GUI.
                     stats_path = os.path.splitext(disk_path)[0] + ".txt"
-                    stats_body = _format_stats_text(
+                    stats_body = _gr_format_stats_text(
                         raster_label, cell_size_m, stats, disk_path=disk_path)
                     with open(stats_path, "w", encoding="utf-8") as f:
                         f.write(stats_body)
@@ -916,7 +916,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
                                            stats["min"], stats["max"]))
                 print("  global rugosity: {:.3f}".format(stats["global"]))
 
-            summary = _format_stats_text(
+            summary = _gr_format_stats_text(
                 raster_label, cell_size_m, stats, disk_path=disk_path)
             if stats_path:
                 summary += "\nStats text: {}".format(stats_path)
