@@ -174,8 +174,9 @@ class JobEditor(QtWidgets.QDialog):
         layout.addWidget(self.ref_settings)
 
         layout.addWidget(QtWidgets.QLabel(
-            "Damaged or moved markers (tick any target that shifted between "
-            "visits -- they are kept but not trusted for alignment):"))
+            "<b>Reference</b> anchors the new timepoint on that target. "
+            "<b>Damaged</b> keeps the target but stops trusting it, for "
+            "anything that shifted between visits."))
 
         self.show_all_markers = QtWidgets.QCheckBox("List all markers")
         self.show_all_markers.setToolTip(
@@ -187,11 +188,25 @@ class JobEditor(QtWidgets.QDialog):
             lambda _on: self._on_reference_changed())
         layout.addWidget(self.show_all_markers)
 
-        self.markers_list = QtWidgets.QListWidget()
-        self.markers_list.setMaximumHeight(130)
-        self.markers_list.setSelectionMode(
+        self.markers_table = QtWidgets.QTableWidget(0, 3)
+        self.markers_table.setHorizontalHeaderLabels(
+            ["Marker", "Reference", "Damaged"])
+        self.markers_table.verticalHeader().setVisible(False)
+        self.markers_table.setMaximumHeight(180)
+        self.markers_table.setSelectionMode(
             QtWidgets.QAbstractItemView.NoSelection)
-        layout.addWidget(self.markers_list)
+        self.markers_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.NoEditTriggers)
+        header = self.markers_table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        self.markers_table.itemChanged.connect(self._on_marker_toggled)
+        layout.addWidget(self.markers_table)
+
+        self.marker_summary = QtWidgets.QLabel("")
+        self.marker_summary.setWordWrap(True)
+        layout.addWidget(self.marker_summary)
 
     def _build_georef_section(self):
         # A revisit takes its georeferencing wholesale from the reference
@@ -423,25 +438,32 @@ class JobEditor(QtWidgets.QDialog):
 
         if job.kind == REPHOTO:
             job.reference_chunk = self.ref_combo.currentText()
-            # Read the label from item data, not the visible text -- the text
+            # Labels come from item data, not the visible text -- the text
             # carries a "(scalebar only)" style annotation.
             #
-            # Ticked markers that are currently filtered out of the list are
-            # preserved: hiding a marker must not silently un-flag it as
-            # damaged, or toggling "List all markers" would quietly change the
-            # job.
-            visible, ticked = set(), []
-            for i in range(self.markers_list.count()):
-                item = self.markers_list.item(i)
-                label = item.data(QtCore.Qt.UserRole)
+            # Selections for markers currently filtered out of the table are
+            # preserved, so toggling "List all markers" cannot silently change
+            # the job.
+            visible = set()
+            reference, damaged = [], []
+            for row in range(self.markers_table.rowCount()):
+                name_item = self.markers_table.item(row, 0)
+                label = name_item.data(QtCore.Qt.UserRole) if name_item else None
                 if not label:
                     continue
                 visible.add(label)
-                if item.checkState() == QtCore.Qt.Checked:
-                    ticked.append(label)
-            retained = [m for m in (job.damaged_markers or [])
-                        if m not in visible]
-            job.damaged_markers = ticked + retained
+                ref_item = self.markers_table.item(row, 1)
+                dmg_item = self.markers_table.item(row, 2)
+                if ref_item and ref_item.checkState() == QtCore.Qt.Checked:
+                    reference.append(label)
+                    if dmg_item and dmg_item.checkState() == QtCore.Qt.Checked:
+                        damaged.append(label)
+
+            if self.markers_table.rowCount():
+                job.reference_markers = reference + [
+                    m for m in (job.reference_markers or []) if m not in visible]
+                job.damaged_markers = damaged + [
+                    m for m in (job.damaged_markers or []) if m not in visible]
 
     # -- slots --
 
@@ -472,7 +494,7 @@ class JobEditor(QtWidgets.QDialog):
         self._revalidate()
 
     def _on_reference_changed(self):
-        self.markers_list.clear()
+        self.markers_table.setRowCount(0)
         if not self._project_info:
             return
         label = self.ref_combo.currentText()
@@ -503,52 +525,114 @@ class JobEditor(QtWidgets.QDialog):
         # depends on. reference_enabled is what tells the two apart, and it is
         # the same flag the alignment itself filters on.
         show_all = self.show_all_markers.isChecked()
-        previously = set(self.job.damaged_markers or [])
-        listed = hidden = 0
+        damaged = set(self.job.damaged_markers or [])
+        # An empty reference_markers list means "use the chunk's own enabled
+        # flags", so the first time a chunk is shown the ticks reflect how
+        # alignment would behave with no intervention.
+        chosen = set(self.job.reference_markers or [])
+        use_defaults = not chosen
 
+        rows = []
+        hidden = 0
         for marker in chunk.get("markers", []):
             scaling_only = (marker.get("in_scalebar")
                             and not marker.get("reference_enabled"))
             if scaling_only and not show_all:
                 hidden += 1
                 continue
+            rows.append((marker, scaling_only))
 
+        self.markers_table.blockSignals(True)
+        self.markers_table.setRowCount(len(rows))
+        for row, (marker, scaling_only) in enumerate(rows):
             label = marker.get("label", "")
-            item = QtWidgets.QListWidgetItem(label)
-            # The displayed text gets a suffix below; keep the real label in
-            # item data so saving the job records the marker name and not the
-            # annotation.
-            item.setData(QtCore.Qt.UserRole, label)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked if label in previously
-                               else QtCore.Qt.Unchecked)
 
+            name_item = QtWidgets.QTableWidgetItem(label)
+            name_item.setData(QtCore.Qt.UserRole, label)
             if scaling_only:
-                item.setText(label + "   (scalebar only)")
-                item.setToolTip(
-                    "Part of a scalebar with no georeference information, so "
-                    "it is not used to align timepoints.")
+                name_item.setText(label + "   (scalebar only)")
+                name_item.setToolTip(
+                    "Part of a scalebar with no georeference information. "
+                    "Tick Reference to anchor on it anyway.")
             elif marker.get("in_scalebar"):
-                item.setText(label + "   (georeferenced + scalebar)")
-                item.setToolTip(
-                    "Used for both scaling and georeferencing, so it does "
-                    "take part in alignment.")
-            elif not marker.get("reference_enabled"):
-                item.setToolTip(
-                    "Not enabled for referencing in this chunk, so it will "
-                    "not be used for alignment anyway.")
-            self.markers_list.addItem(item)
-            listed += 1
+                name_item.setText(label + "   (georeferenced + scalebar)")
+                name_item.setToolTip(
+                    "A temporary target doing double duty: it carries scale "
+                    "and georeference information, so it does anchor the "
+                    "alignment.")
+            self.markers_table.setItem(row, 0, name_item)
 
-        if not listed:
-            item = QtWidgets.QListWidgetItem("No markers to list")
-            item.setFlags(QtCore.Qt.NoItemFlags)
-            self.markers_list.addItem(item)
+            is_reference = (marker.get("reference_enabled", False)
+                            if use_defaults else label in chosen)
+
+            ref_item = QtWidgets.QTableWidgetItem()
+            ref_item.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+            ref_item.setCheckState(QtCore.Qt.Checked if is_reference
+                                   else QtCore.Qt.Unchecked)
+            ref_item.setToolTip(
+                "Use this target's position from the earlier timepoint to "
+                "anchor the new one.")
+            self.markers_table.setItem(row, 1, ref_item)
+
+            dmg_item = QtWidgets.QTableWidgetItem()
+            dmg_item.setCheckState(QtCore.Qt.Checked if label in damaged
+                                   else QtCore.Qt.Unchecked)
+            # Damage only means anything for a marker that is anchoring the
+            # alignment; on one that is not, the tick would have no effect and
+            # would only suggest it did.
+            dmg_item.setFlags(QtCore.Qt.ItemIsUserCheckable
+                              | (QtCore.Qt.ItemIsEnabled if is_reference
+                                 else QtCore.Qt.NoItemFlags))
+            dmg_item.setToolTip(
+                "This target moved between visits: keep it, but do not let it "
+                "pull the alignment." if is_reference else
+                "Only applies to markers used as a reference.")
+            self.markers_table.setItem(row, 2, dmg_item)
+
+        self.markers_table.blockSignals(False)
 
         self.show_all_markers.setText(
             "List all markers ({} scalebar-only target(s) hidden)".format(hidden)
             if hidden else "List all markers")
+        self._update_marker_summary()
         self._revalidate()
+
+    def _on_marker_toggled(self, item):
+        """Keep the Damaged column in step with the Reference column."""
+        if item.column() != 1:
+            self._update_marker_summary()
+            self._revalidate()
+            return
+        damaged_item = self.markers_table.item(item.row(), 2)
+        if damaged_item is not None:
+            is_reference = item.checkState() == QtCore.Qt.Checked
+            self.markers_table.blockSignals(True)
+            damaged_item.setFlags(
+                QtCore.Qt.ItemIsUserCheckable
+                | (QtCore.Qt.ItemIsEnabled if is_reference
+                   else QtCore.Qt.NoItemFlags))
+            if not is_reference:
+                damaged_item.setCheckState(QtCore.Qt.Unchecked)
+            self.markers_table.blockSignals(False)
+        self._update_marker_summary()
+        self._revalidate()
+
+    def _update_marker_summary(self):
+        reference = damaged = 0
+        for row in range(self.markers_table.rowCount()):
+            ref_item = self.markers_table.item(row, 1)
+            dmg_item = self.markers_table.item(row, 2)
+            if ref_item and ref_item.checkState() == QtCore.Qt.Checked:
+                reference += 1
+                if dmg_item and dmg_item.checkState() == QtCore.Qt.Checked:
+                    damaged += 1
+        anchors = reference - damaged
+        colour = "#1a7f37" if anchors >= 3 else "#b8860b"
+        self.marker_summary.setText(
+            "<span style='color:{};'>{} marker(s) will anchor this "
+            "timepoint{}.</span>".format(
+                colour, anchors,
+                " ({} more marked damaged)".format(damaged) if damaged else ""))
 
     def _refresh_reference_settings(self):
         """Redraw the reference comparison after a settings change."""

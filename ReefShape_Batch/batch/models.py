@@ -286,6 +286,16 @@ class Job:
 
     # -- rephoto only --
     reference_chunk: str = ""                 # chunk label to align against
+
+    # Which of the reference chunk's markers anchor the new timepoint. Empty
+    # means "whichever are reference-enabled in the reference chunk", which is
+    # the default and covers every conventional project. A non-empty list is
+    # an explicit override, for when the user wants to anchor on a different
+    # set than the earlier timepoint was georeferenced from.
+    reference_markers: List[str] = field(default_factory=list)
+
+    # Markers that moved between visits. Still imported, but with an accuracy
+    # loose enough that they cannot pull the alignment around.
     damaged_markers: List[str] = field(default_factory=list)
 
     # Settings, seeded from a template then editable per job.
@@ -470,8 +480,23 @@ def validate_job(job: Job) -> List[Issue]:
                  "succeed with so few photos.".format(total))
 
     # -- rephoto specifics --
-    if job.kind == REPHOTO and not job.reference_chunk:
-        err("No reference chunk selected for re-photography.")
+    if job.kind == REPHOTO:
+        if not job.reference_chunk:
+            err("No reference chunk selected for re-photography.")
+
+        # Only meaningful when the user has overridden the defaults; an empty
+        # list means "use the reference chunk's enabled flags", which the
+        # alignment validates for itself.
+        if job.reference_markers:
+            anchors = [m for m in job.reference_markers
+                       if m not in set(job.damaged_markers or [])]
+            if not anchors:
+                err("Every chosen reference marker is also marked damaged, so "
+                    "nothing would anchor this timepoint.")
+            elif len(anchors) < 3:
+                warn("Only {} marker(s) will anchor this timepoint. Three or "
+                     "more spread across the plot give a far more stable "
+                     "alignment.".format(len(anchors)))
 
     # -- georeferencing --
     if job.georef.enabled:

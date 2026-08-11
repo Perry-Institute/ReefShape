@@ -242,6 +242,8 @@ def run(job, reporter):
                 chunk=chunk,
                 target_type=settings.resolve_target_type(),
                 damaged_markers=job.get("damaged_markers") or [],
+                # Empty means "use the reference chunk's own enabled flags".
+                reference_markers=job.get("reference_markers") or None,
                 reporter=reporter,
             )
 

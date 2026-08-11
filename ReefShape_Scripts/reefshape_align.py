@@ -75,14 +75,19 @@ def export_estimated_reference(reference_chunk, path):
         delimiter=",", precision=EXPORT_PRECISION)
 
 
-def filter_to_enabled_markers(reference_chunk, path):
-    """Strip markers that were not used for georeferencing in timepoint one.
+def filter_to_enabled_markers(reference_chunk, path, include_labels=None):
+    """Keep only the markers that should anchor the new timepoint.
 
-    Metashape's exported `enabled` flag cannot be relied on -- it comes out set
-    for every marker regardless -- so the flag is read from the chunk instead
-    and the file rewritten to contain only the markers whose reference was
-    actually enabled. Without this, a marker the user deliberately excluded
-    from the first timepoint's solution would quietly steer the second one.
+    By default that means the markers whose reference is enabled in the
+    reference chunk. Metashape's exported `enabled` column cannot be used for
+    this -- it comes out set for every marker regardless -- so the flag is read
+    from the chunk itself. Without the filter, a marker the user deliberately
+    excluded from the first timepoint's solution would quietly steer the
+    second one.
+
+    `include_labels`, when given, replaces that rule with an explicit set. Use
+    it to anchor on a different selection than the earlier timepoint was
+    georeferenced from.
 
     Rewrites `path` in place, leaving a single header row (the source file has
     two: a CRS line and a column line). Returns the number of markers kept.
@@ -106,12 +111,18 @@ def filter_to_enabled_markers(reference_chunk, path):
     # `reference.enabled` already distinguishes the two cases: a
     # scaling-only target is not reference-enabled, a double-duty one is.
     enabled = {}
-    for marker in reference_chunk.markers:
-        try:
-            if marker.reference.enabled:
+    if include_labels is not None:
+        wanted = set(include_labels)
+        for marker in reference_chunk.markers:
+            if marker.label in wanted:
                 enabled[marker.label] = marker
-        except AttributeError:
-            continue
+    else:
+        for marker in reference_chunk.markers:
+            try:
+                if marker.reference.enabled:
+                    enabled[marker.label] = marker
+            except AttributeError:
+                continue
 
     with open(path, newline="") as handle:
         rows = list(csv.reader(handle))
@@ -127,6 +138,12 @@ def filter_to_enabled_markers(reference_chunk, path):
     kept = [row for row in rows[2:] if row and row[0] in enabled]
 
     if not kept:
+        if include_labels is not None:
+            raise WorkflowError(
+                "None of the chosen reference markers ({}) were found in "
+                "chunk {!r}, so there is nothing to anchor the new timepoint "
+                "on.".format(", ".join(sorted(include_labels)) or "none",
+                             reference_chunk.label))
         raise WorkflowError(
             "No usable reference markers in chunk {!r}. Alignment needs "
             "markers whose reference is enabled; this chunk has {} marker(s), "
@@ -218,7 +235,8 @@ def copy_outer_boundary(reference_chunk, chunk, reporter):
 
 
 def align_timepoints(doc, reference_chunk, chunk, target_type,
-                     damaged_markers=None, reporter=None, keep_reference_file=False):
+                     damaged_markers=None, reporter=None,
+                     keep_reference_file=False, reference_markers=None):
     """Align `chunk` (a new timepoint) onto `reference_chunk` (an earlier one).
 
     Detects markers in the new chunk if it has none, imports the reference
@@ -254,9 +272,14 @@ def align_timepoints(doc, reference_chunk, chunk, target_type,
             reference_chunk.label))
         export_estimated_reference(reference_chunk, est_ref_path)
 
-        kept = filter_to_enabled_markers(reference_chunk, est_ref_path)
-        reporter.info("  {} of {} markers are enabled for referencing".format(
-            kept, len(reference_chunk.markers)))
+        kept = filter_to_enabled_markers(reference_chunk, est_ref_path,
+                                         include_labels=reference_markers)
+        if reference_markers:
+            reporter.info("  {} of {} markers chosen to anchor this timepoint"
+                          .format(kept, len(reference_chunk.markers)))
+        else:
+            reporter.info("  {} of {} markers are enabled for referencing"
+                          .format(kept, len(reference_chunk.markers)))
 
         # Only detect when the chunk has none: re-detecting would duplicate
         # markers the user placed by hand or a previous run already found.
