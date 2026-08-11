@@ -262,6 +262,7 @@ class Template:
     export: ExportSettings = field(default_factory=ExportSettings)
     georef: GeorefSettings = field(default_factory=GeorefSettings)
     resources: ResourceSettings = field(default_factory=ResourceSettings)
+    icp: IcpSettings = field(default_factory=IcpSettings)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -275,6 +276,7 @@ class Template:
             export=_from_dict(ExportSettings, data.get("export")),
             georef=_from_dict(GeorefSettings, data.get("georef")),
             resources=_from_dict(ResourceSettings, data.get("resources")),
+            icp=_from_dict(IcpSettings, data.get("icp")),
         )
 
 
@@ -413,10 +415,11 @@ class Job:
     def apply_template(self, template: Template, keep_paths: bool = True) -> None:
         """Overwrite this job's settings from `template`.
 
-        With `keep_paths` (the default) the per-plot georef CSV is preserved,
-        since that file is necessarily different for every plot while
-        everything around it -- scalebar file, column layout, corner order --
-        is shared. Without it the template wins outright.
+        With `keep_paths` (the default) the georeferencing CSV is the single
+        exception: that file holds this plot's own marker coordinates, so it is
+        necessarily different for every plot. Everything else is shared across
+        a survey and comes from the template -- including the scalebar file,
+        which is one master list reused by every plot.
         """
         import copy
         georef_path = self.georef.georef_path
@@ -424,6 +427,7 @@ class Job:
         self.export = copy.deepcopy(template.export)
         self.georef = copy.deepcopy(template.georef)
         self.resources = copy.deepcopy(template.resources)
+        self.icp = copy.deepcopy(template.icp)
         self.template_name = template.name
         if keep_paths and georef_path:
             self.georef.georef_path = georef_path

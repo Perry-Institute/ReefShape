@@ -30,6 +30,13 @@ class JobEditor(QtWidgets.QDialog):
         self.templates = templates or store.load_templates()
         self._project_info = None
 
+        # Set before any widget exists. Populating the form fires the same
+        # signals a user's clicks would, and those handlers write the form
+        # back into the job -- which, mid-load, would write the *unpopulated*
+        # widgets over the settings being loaded. Guarding on this is what
+        # keeps loading a one-way operation. See _load and _apply.
+        self._loading = False
+
         self.setWindowTitle("{} job".format(
             "New plot" if job.kind == NEW_PLOT else "Re-photography"))
         self.setMinimumSize(720, 640)
@@ -70,7 +77,11 @@ class JobEditor(QtWidgets.QDialog):
         outer.addWidget(buttons)
         self.ok_button = buttons.button(QtWidgets.QDialogButtonBox.Ok)
 
-        self._load()
+        self._loading = True
+        try:
+            self._load()
+        finally:
+            self._loading = False
         self._revalidate()
 
     # -- construction --
@@ -562,7 +573,14 @@ class JobEditor(QtWidgets.QDialog):
             self._probe()
 
     def _apply(self):
-        """Write the form back into the job."""
+        """Write the form back into the job.
+
+        Does nothing while the form is being populated: the signals that fire
+        during loading would otherwise write half-filled widgets over the
+        settings being loaded, silently resetting the job to defaults.
+        """
+        if self._loading:
+            return
         job = self.job
         job.label = self.label_edit.text().strip()
         job.project_path = self.project_row.path()
@@ -944,6 +962,8 @@ class JobEditor(QtWidgets.QDialog):
             .format(name.strip()))
 
     def _revalidate(self):
+        if self._loading:
+            return
         self._apply()
         issues = models.validate_job(self.job)
         self.issues_label.setText(issue_summary_html(issues))

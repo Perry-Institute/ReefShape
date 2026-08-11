@@ -112,7 +112,8 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.addSeparator()
         self.act_template = add(
             "Apply template...", self._apply_template,
-            "Push one set of processing and export settings onto many jobs")
+            "Push one set of settings onto the selected jobs, or all of them. "
+            "Each plot keeps its own georeferencing file.")
 
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(self._action("&Open batch...", self._open_batch, "Ctrl+O"))
@@ -176,7 +177,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        # Extended selection so a template can be applied to a chosen subset
+        # of plots rather than all-or-one.
+        self.table.setSelectionMode(
+            QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -216,14 +220,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -- job list --
 
+    def _selected_rows(self):
+        model = self.table.selectionModel()
+        if model is None:
+            return []
+        return sorted(i.row() for i in model.selectedRows())
+
+    def _selected_jobs(self):
+        """Every selected job, in table order."""
+        return [self.batch.jobs[r] for r in self._selected_rows()
+                if 0 <= r < len(self.batch.jobs)]
+
     def _selected_job(self):
-        rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
-        if not rows:
-            return None
-        index = rows[0].row()
-        if 0 <= index < len(self.batch.jobs):
-            return self.batch.jobs[index]
-        return None
+        """The first selected job, for the single-target actions."""
+        jobs = self._selected_jobs()
+        return jobs[0] if jobs else None
 
     def _refresh_table(self):
         self.table.blockSignals(True)
@@ -392,14 +403,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_table()
 
     def _remove_selected(self):
-        job = self._selected_job()
-        if job is None:
+        jobs = self._selected_jobs()
+        if not jobs:
             return
-        if job.status == models.RUNNING:
+        if any(j.status == models.RUNNING for j in jobs):
             QtWidgets.QMessageBox.information(
-                self, "Job is running", "Stop this job before removing it.")
+                self, "Job is running",
+                "Stop the running job before removing it.")
             return
-        self.batch.remove(job.job_id)
+        if len(jobs) > 1:
+            reply = QtWidgets.QMessageBox.question(
+                self, "Remove jobs",
+                "Remove {} jobs from the batch?".format(len(jobs)),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No)
+            if reply != QtWidgets.QMessageBox.Yes:
+                return
+        for job in jobs:
+            self.batch.remove(job.job_id)
         self._refresh_table()
         self._update_actions()
 
@@ -414,17 +435,59 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_template(self):
         templates = store.load_templates()
-        names = [t.name for t in templates]
-        name, ok = QtWidgets.QInputDialog.getItem(
-            self, "Apply template",
-            "Apply these settings to every job in the batch.\n"
-            "Per-plot georeferencing files are kept.", names, 0, False)
-        if not ok:
+        if not templates:
             return
+        selected = self._selected_jobs()
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Apply template")
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        intro = QtWidgets.QLabel(
+            "Applies every processing, export and georeferencing setting from "
+            "the template.\n\nThe only thing kept per plot is its "
+            "georeferencing file, which holds that plot's own marker "
+            "coordinates. The scalebar file comes from the template, since "
+            "one master list is shared across a survey.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        form = QtWidgets.QFormLayout()
+        combo = QtWidgets.QComboBox()
+        combo.addItems([t.name for t in templates])
+        last = store.get_setting("last_template", "Default")
+        index = combo.findText(last or "Default")
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        form.addRow("Template:", combo)
+
+        scope = QtWidgets.QComboBox()
+        scope.addItem("All {} job(s) in the batch".format(len(self.batch.jobs)))
+        if selected:
+            scope.addItem("Selected job(s) only ({})".format(len(selected)))
+            # If the user has made a selection, that is almost certainly what
+            # they mean to act on.
+            scope.setCurrentIndex(1)
+        form.addRow("Apply to:", scope)
+        layout.addLayout(form)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if exec_(dialog) != QtWidgets.QDialog.Accepted:
+            return
+
+        name = combo.currentText()
         template = next(t for t in templates if t.name == name)
-        count = self.batch.apply_template_to_all(template)
+        job_ids = ([j.job_id for j in selected]
+                   if scope.currentIndex() == 1 else None)
+        count = self.batch.apply_template_to_all(template, job_ids)
         store.set_setting("last_template", name)
         self._refresh_table()
+        self._show_details(self._selected_job())
         self.statusBar().showMessage(
             "Applied '{}' to {} job(s).".format(name, count), 5000)
 
