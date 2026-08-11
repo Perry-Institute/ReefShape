@@ -157,6 +157,21 @@ class JobEditor(QtWidgets.QDialog):
         layout.addLayout(row)
         self.ref_combo.currentIndexChanged.connect(self._on_reference_changed)
 
+        self.icp_check = QtWidgets.QCheckBox(
+            "Try alignment without permanent markers (ICP)")
+        self.icp_check.setToolTip(
+            "For plots with no permanent corner targets. Each visit is "
+            "georeferenced and scaled from its own temporary markers, which "
+            "usually leaves the two timepoints within 0.1-2 m of each other; "
+            "ICP then matches the reef surfaces themselves to close that gap.\n\n"
+            "Leave off wherever permanent markers exist -- matching them is "
+            "exact, much faster, and can be checked independently.")
+        self.icp_check.toggled.connect(self._on_icp_toggled)
+        layout.addWidget(self.icp_check)
+
+        self.icp_box = self._build_icp_settings()
+        layout.addWidget(self.icp_box)
+
         self.ref_detail = QtWidgets.QLabel("")
         self.ref_detail.setStyleSheet("color: palette(mid);")
         self.ref_detail.setWordWrap(True)
@@ -208,26 +223,165 @@ class JobEditor(QtWidgets.QDialog):
         self.marker_summary.setWordWrap(True)
         layout.addWidget(self.marker_summary)
 
-    def _build_georef_section(self):
-        # A revisit takes its georeferencing wholesale from the reference
-        # chunk -- markers, scale and coordinate system all come across in the
-        # alignment step. There is nothing here for the user to supply, and
-        # offering the controls anyway would invite them to set something that
-        # is then ignored.
-        if self.job.kind == REPHOTO:
-            self.georef_box = None
-            self.georef_check = None
-            self._georef_dependents = []
-            note = QtWidgets.QLabel(
-                "<b>Georeferencing</b><br>Taken from the reference chunk: its "
-                "marker positions, scale and coordinate system are copied to "
-                "this timepoint during alignment. Nothing to set here.")
-            note.setWordWrap(True)
-            note.setStyleSheet("color: palette(mid); padding: 4px 0;")
-            self.form.addWidget(note)
-            return
+    def _build_icp_settings(self):
+        """ICP tuning. Defaults match 03_align_chunks_ICP.py."""
+        box = QtWidgets.QGroupBox("ICP settings")
+        grid = QtWidgets.QGridLayout(box)
 
-        layout = self._section("Georeferencing")
+        note = QtWidgets.QLabel(
+            "ICP runs after this timepoint's mesh is built and before the DEM, "
+            "so the mesh can be used for matching and the rasters are then "
+            "generated in the corrected position.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(mid);")
+        grid.addWidget(note, 0, 0, 1, 4)
+
+        self.icp_moving_combo = QtWidgets.QComboBox()
+        self.icp_master_combo = QtWidgets.QComboBox()
+        for combo in (self.icp_moving_combo, self.icp_master_combo):
+            for label, _value in models.ICP_SOURCES:
+                combo.addItem(label)
+        grid.addWidget(QtWidgets.QLabel("This timepoint:"), 1, 0)
+        grid.addWidget(self.icp_moving_combo, 1, 1)
+        grid.addWidget(QtWidgets.QLabel("Reference:"), 1, 2)
+        grid.addWidget(self.icp_master_combo, 1, 3)
+
+        self.icp_scale_spin = QtWidgets.QDoubleSpinBox()
+        self.icp_scale_spin.setDecimals(4)
+        self.icp_scale_spin.setRange(0.0001, 10000.0)
+        self.icp_scale_spin.setToolTip(
+            "Size of the reference relative to this timepoint. Both visits "
+            "are scaled in metres, so this is 1.0 unless something is wrong.")
+        grid.addWidget(QtWidgets.QLabel("Scale ratio:"), 2, 0)
+        grid.addWidget(self.icp_scale_spin, 2, 1)
+
+        self.icp_res_spin = QtWidgets.QDoubleSpinBox()
+        self.icp_res_spin.setDecimals(4)
+        self.icp_res_spin.setRange(0.0001, 10.0)
+        self.icp_res_spin.setSingleStep(0.005)
+        self.icp_res_spin.setSuffix(" m")
+        self.icp_res_spin.setToolTip(
+            "Approximate spacing between points in the reference. 0.01 suits "
+            "mesh-based reef alignment; lower for sub-centimetre work once "
+            "roughly aligned, higher for a sparse tie-point first pass.")
+        grid.addWidget(QtWidgets.QLabel("Target resolution:"), 2, 2)
+        grid.addWidget(self.icp_res_spin, 2, 3)
+
+        self.icp_initial_check = QtWidgets.QCheckBox(
+            "Use initial alignment (skip global registration)")
+        self.icp_initial_check.setToolTip(
+            "Recommended. Starts ICP from where the two timepoints already "
+            "sit. Untick only if they are wildly misaligned -- global feature "
+            "matching is unreliable on this kind of data.")
+        self.icp_crop_check = QtWidgets.QCheckBox(
+            "Crop to overlap after coarse pass")
+        self.icp_crop_check.setToolTip(
+            "Drops areas only one survey covered, which would otherwise be "
+            "matched to whatever is nearest and skew the fit. Recommended.")
+        self.icp_gicp_check = QtWidgets.QCheckBox(
+            "Add Generalized ICP refinement")
+        self.icp_gicp_check.setToolTip(
+            "A further pass using plane-to-plane matching. Slower, but "
+            "typically the tightest final precision on noisy surfaces.")
+        grid.addWidget(self.icp_initial_check, 3, 0, 1, 2)
+        grid.addWidget(self.icp_crop_check, 3, 2, 1, 2)
+        grid.addWidget(self.icp_gicp_check, 4, 0, 1, 2)
+
+        warn_label = QtWidgets.QLabel("Warn if fit is worse than:")
+        self.icp_fitness_spin = QtWidgets.QDoubleSpinBox()
+        self.icp_fitness_spin.setDecimals(2)
+        self.icp_fitness_spin.setRange(0.0, 1.0)
+        self.icp_fitness_spin.setSingleStep(0.05)
+        self.icp_fitness_spin.setPrefix("fitness ")
+        self.icp_rmse_spin = QtWidgets.QDoubleSpinBox()
+        self.icp_rmse_spin.setDecimals(3)
+        self.icp_rmse_spin.setRange(0.001, 10.0)
+        self.icp_rmse_spin.setSingleStep(0.01)
+        self.icp_rmse_spin.setPrefix("RMSE ")
+        self.icp_rmse_spin.setSuffix(" m")
+        for widget in (self.icp_fitness_spin, self.icp_rmse_spin):
+            widget.setToolTip(
+                "ICP always returns a transform, even a bad one, and with no "
+                "permanent markers there is nothing independent to check it "
+                "against. Outside these bounds the job still completes, but "
+                "is flagged so you know to look at the result.")
+        grid.addWidget(warn_label, 5, 0)
+        grid.addWidget(self.icp_fitness_spin, 5, 1)
+        grid.addWidget(self.icp_rmse_spin, 5, 2)
+
+        self.icp_deps_label = QtWidgets.QLabel("")
+        self.icp_deps_label.setWordWrap(True)
+        grid.addWidget(self.icp_deps_label, 6, 0, 1, 4)
+
+        return box
+
+    def _on_icp_toggled(self, enabled):
+        """Show the georeferencing panel only when ICP needs it."""
+        self.icp_box.setVisible(enabled)
+        if self.georef_box is not None:
+            self.georef_box.setVisible(enabled)
+        if self.georef_note is not None:
+            self.georef_note.setVisible(not enabled)
+        if enabled and self.georef_check is not None:
+            # ICP needs this timepoint referenced from its own targets, which
+            # is the whole reason the panel is back.
+            self.georef_check.setChecked(True)
+        if enabled:
+            self._check_icp_dependencies()
+        self._revalidate()
+
+    def _check_icp_dependencies(self):
+        """Warn up front if ICP's third-party packages are not installed yet.
+
+        pip runs on first use and can take several minutes. Finding that out
+        when the queue is half way through an overnight run is worse than
+        being told now.
+        """
+        import importlib.util
+        missing = [name for name in ("open3d", "scipy", "numpy")
+                   if importlib.util.find_spec(name) is None]
+        if missing:
+            self.icp_deps_label.setText(
+                "<span style='color:#b8860b;'>ICP needs {} which "
+                "{} not installed yet. The first ICP job will install {} "
+                "automatically -- expect it to sit for a few minutes before "
+                "processing starts.</span>".format(
+                    ", ".join(missing), "is" if len(missing) == 1 else "are",
+                    "it" if len(missing) == 1 else "them"))
+        else:
+            self.icp_deps_label.setText(
+                "<span style='color:#1a7f37;'>&#10003; ICP dependencies are "
+                "installed.</span>")
+
+    def _build_georef_section(self):
+        # For a revisit the panel is built but hidden: marker alignment takes
+        # its georeferencing wholesale from the reference chunk, so there is
+        # nothing to supply. ICP is the exception -- with only temporary
+        # targets, each visit is referenced and scaled from its own, so the
+        # panel comes back when ICP is selected. See _on_icp_toggled.
+        if self.job.kind == REPHOTO:
+            self.georef_note = QtWidgets.QLabel(
+                "<b>Georeferencing</b><br>Taken from the reference chunk: its "
+                "marker positions, scale and coordinate system are applied to "
+                "this timepoint during alignment. Nothing to set here.")
+            self.georef_note.setWordWrap(True)
+            self.georef_note.setStyleSheet("color: palette(mid); padding: 4px 0;")
+            self.form.addWidget(self.georef_note)
+        else:
+            self.georef_note = None
+
+        self.georef_box = QtWidgets.QGroupBox("Georeferencing")
+        layout = QtWidgets.QVBoxLayout(self.georef_box)
+        self.form.addWidget(self.georef_box)
+
+        if self.job.kind == REPHOTO:
+            hint = QtWidgets.QLabel(
+                "ICP matches surfaces, not markers, so this timepoint needs "
+                "its own georeferencing and scale from the temporary targets "
+                "used on this visit.")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: palette(mid);")
+            layout.addWidget(hint)
 
         self.georef_check = QtWidgets.QCheckBox(
             "Detect markers and apply scaling and georeferencing")
@@ -372,13 +526,22 @@ class JobEditor(QtWidgets.QDialog):
         self.gis_check.setChecked(job.export.gis_outputs)
         self.taglab_check.setChecked(job.export.taglab_outputs)
 
-        if self.georef_check is not None:
-            self._on_georef_toggled(job.georef.enabled)
-        else:
-            # A revisit gets its markers, scale and CRS from the reference
-            # chunk during alignment, so the workflow must not try to detect
-            # and reference them again.
-            job.georef.enabled = False
+        if job.kind == REPHOTO:
+            self.icp_check.setChecked(job.icp.enabled)
+            self.icp_moving_combo.setCurrentIndex(_source_index(job.icp.moving_source))
+            self.icp_master_combo.setCurrentIndex(_source_index(job.icp.master_source))
+            self.icp_scale_spin.setValue(job.icp.scale_ratio)
+            self.icp_res_spin.setValue(job.icp.target_resolution)
+            self.icp_initial_check.setChecked(job.icp.use_initial_alignment)
+            self.icp_crop_check.setChecked(job.icp.crop_to_overlap)
+            self.icp_gicp_check.setChecked(job.icp.use_generalized_icp)
+            self.icp_fitness_spin.setValue(job.icp.min_fitness)
+            self.icp_rmse_spin.setValue(job.icp.max_rmse)
+            # Not connected via toggled, since setChecked above is a no-op when
+            # the value already matches the default.
+            self._on_icp_toggled(job.icp.enabled)
+
+        self._on_georef_toggled(job.georef.enabled)
         self._on_photos_changed()
 
         for widget in (self.label_edit, self.chunk_edit):
@@ -406,21 +569,36 @@ class JobEditor(QtWidgets.QDialog):
         job.photo_folders = [self.photos_row.path()] if self.photos_row.path() else []
         job.chunk_name = self.chunk_edit.text().strip()
 
-        if self.georef_check is not None:
-            job.georef.enabled = self.georef_check.isChecked()
-            job.georef.target_type = models.TARGET_TYPES[
-                self.target_combo.currentIndex()][1]
-            job.georef.scalebar_path = self.scalebar_row.path()
-            job.georef.georef_path = self.georef_file_row.path()
-            for name, value in self.columns_widget.values().items():
-                setattr(job.georef, name, value)
-            job.georef.corner_markers = self.corners_widget.values()
+        job.georef.target_type = models.TARGET_TYPES[
+            self.target_combo.currentIndex()][1]
+        job.georef.scalebar_path = self.scalebar_row.path()
+        job.georef.georef_path = self.georef_file_row.path()
+        for name, value in self.columns_widget.values().items():
+            setattr(job.georef, name, value)
+        job.georef.corner_markers = self.corners_widget.values()
+
+        if job.kind == REPHOTO:
+            job.icp.enabled = self.icp_check.isChecked()
+            job.icp.moving_source = models.ICP_SOURCES[
+                self.icp_moving_combo.currentIndex()][1]
+            job.icp.master_source = models.ICP_SOURCES[
+                self.icp_master_combo.currentIndex()][1]
+            job.icp.scale_ratio = self.icp_scale_spin.value()
+            job.icp.target_resolution = self.icp_res_spin.value()
+            job.icp.use_initial_alignment = self.icp_initial_check.isChecked()
+            job.icp.crop_to_overlap = self.icp_crop_check.isChecked()
+            job.icp.use_generalized_icp = self.icp_gicp_check.isChecked()
+            job.icp.min_fitness = self.icp_fitness_spin.value()
+            job.icp.max_rmse = self.icp_rmse_spin.value()
+
+            # Marker alignment supplies the referencing wholesale, so the
+            # workflow's own detect-and-reference pass must stay off. ICP is
+            # the exception: it needs this timepoint referenced from its own
+            # temporary targets before the surfaces can be matched.
+            job.georef.enabled = (self.icp_check.isChecked()
+                                  and self.georef_check.isChecked())
         else:
-            # Revisit: alignment supplies the referencing, so the workflow's
-            # own detect-and-reference pass must stay off. The target type is
-            # still needed -- marker detection runs on the new photos to find
-            # the targets the reference positions are matched onto.
-            job.georef.enabled = False
+            job.georef.enabled = self.georef_check.isChecked()
 
         if self.crs_picker is not None:
             job.processing.crs_wkt = self.crs_picker.wkt()
@@ -775,6 +953,12 @@ class JobEditor(QtWidgets.QDialog):
     def accept(self):
         self._apply()
         super().accept()
+
+
+def _source_index(value):
+    """Index of an ICP source value in ICP_SOURCES, defaulting to the first."""
+    return next((i for i, (_label, v) in enumerate(models.ICP_SOURCES)
+                 if v == value), 0)
 
 
 def edit_job(job: Job, parent=None) -> bool:

@@ -214,6 +214,8 @@ def run(job, reporter):
     doc.save()
 
     settings = WorkflowSettings.from_job_dict(job)
+    icp = job.get("icp") or {}
+    icp_enabled = job.get("kind") == "rephoto" and icp.get("enabled")
 
     if job.get("kind") == "rephoto":
         reference_label = job.get("reference_chunk", "")
@@ -232,7 +234,17 @@ def run(job, reporter):
         already_aligned = any(
             m.reference.location is not None for m in chunk.markers
             if m.reference)
-        if already_aligned:
+        if icp_enabled:
+            # ICP mode: this timepoint is georeferenced and scaled from its own
+            # temporary targets, exactly like a new plot, and only afterwards
+            # matched onto the reference chunk by surface. Importing the
+            # reference chunk's marker positions here would fight that -- the
+            # targets are not the same physical objects between visits.
+            reporter.info(
+                "ICP alignment selected: this timepoint is referenced from its "
+                "own targets, then matched to {!r} by surface after the mesh "
+                "is built.".format(reference_label))
+        elif already_aligned:
             reporter.info("Chunk is already referenced; skipping timepoint "
                           "alignment.")
         else:
@@ -247,7 +259,83 @@ def run(job, reporter):
                 reporter=reporter,
             )
 
-    return reefshape_core.run_workflow(doc, chunk, settings, reporter)
+    hook = None
+    if icp_enabled:
+        hook = _make_icp_hook(doc, job, icp, reference_chunk, reporter)
+
+    return reefshape_core.run_workflow(doc, chunk, settings, reporter,
+                                       on_mesh_complete=hook)
+
+
+def _make_icp_hook(doc, job, icp, reference_chunk, reporter):
+    """Build the post-mesh callback that runs ICP.
+
+    Runs after the mesh exists and before the DEM, which is the last moment
+    the chunk transform can change without invalidating a product: the mesh
+    moves with the transform, whereas the DEM and orthomosaic are rasters in
+    world space.
+    """
+    import reefshape_icp  # noqa: E402 -- deferred; see reefshape_icp docstring
+
+    def on_mesh_complete(chunk):
+        reporter.step("ICP alignment to {!r}".format(reference_chunk.label))
+        try:
+            result = reefshape_icp.align_chunk_to_reference(
+                moving_chunk=chunk,
+                master_chunk=reference_chunk,
+                moving_source=icp.get("moving_source", "mesh"),
+                master_source=icp.get("master_source", "mesh"),
+                scale_ratio=icp.get("scale_ratio", 1.0),
+                target_resolution=icp.get("target_resolution", 0.01),
+                use_initial_alignment=icp.get("use_initial_alignment", True),
+                crop_to_overlap=icp.get("crop_to_overlap", True),
+                use_generalized_icp=icp.get("use_generalized_icp", False),
+                reporter=reporter,
+            )
+        except reefshape_icp.IcpError as exc:
+            # Not fatal. Alignment failing leaves the timepoint georeferenced
+            # from its own targets -- usable on its own, just not registered
+            # to the earlier visit. Better to finish and say so than to throw
+            # away a completed mesh.
+            reporter.warn(
+                "ICP alignment could not run: {}. This timepoint keeps its own "
+                "georeferencing and will NOT be registered to {!r}."
+                .format(exc, reference_chunk.label))
+            return
+
+        protocol.emit("icp", fitness=result.fitness,
+                      rmse=result.inlier_rmse,
+                      moving_points=result.source_points,
+                      master_points=result.target_points)
+
+        # ICP always returns a transform, even a bad one, and with no
+        # permanent markers there is nothing independent to check it against.
+        # These statistics are the only signal, so a poor fit is surfaced as a
+        # warning the user has to read -- but not a failure, because the
+        # products are still built and may be perfectly usable.
+        min_fitness = float(icp.get("min_fitness", 0.5))
+        max_rmse = float(icp.get("max_rmse", 0.05))
+        problems = []
+        if result.fitness < min_fitness:
+            problems.append(
+                "only {:.0%} of the new timepoint found a match on the "
+                "reference surface (below the {:.0%} you set)".format(
+                    result.fitness, min_fitness))
+        if result.inlier_rmse > max_rmse:
+            problems.append(
+                "residual misfit is {:.3f} m (above the {:.3f} m you set)"
+                .format(result.inlier_rmse, max_rmse))
+        if problems:
+            reporter.warn(
+                "ICP alignment to {!r} may be poor: {}. The data products were "
+                "still built. Check the two timepoints overlay before using "
+                "them for change detection."
+                .format(reference_chunk.label, "; and ".join(problems)))
+        else:
+            reporter.info("ICP alignment looks good -- {}".format(
+                result.summary()))
+
+    return on_mesh_complete
 
 
 def main(argv):

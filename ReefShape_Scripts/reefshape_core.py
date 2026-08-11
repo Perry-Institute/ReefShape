@@ -669,7 +669,7 @@ def update_and_save(doc, reporter):
 # The pipeline
 # --------------------------------------------------------------------------
 
-def run_workflow(doc, chunk, settings, reporter=None):
+def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     """Run the full ReefShape workflow on `chunk`.
 
     Returns a WorkflowResult. Raises WorkflowError for conditions the user has
@@ -681,6 +681,13 @@ def run_workflow(doc, chunk, settings, reporter=None):
     straight to the first incomplete stage. The batch runner's retry button
     depends on this property, so the guards are load-bearing -- do not
     "simplify" them away.
+
+    `on_mesh_complete(chunk)` runs once the mesh exists and the chunk is known
+    to be properly referenced, but before the DEM. That is the only point at
+    which the chunk transform can still be changed without invalidating
+    anything: the mesh moves with the transform, while the DEM and
+    orthomosaic are rasters in world space and would have to be rebuilt. ICP
+    timepoint alignment uses this.
     """
     reporter = reporter or Reporter()
     warnings = []
@@ -872,6 +879,11 @@ def run_workflow(doc, chunk, settings, reporter=None):
         reporter.warn(problem)
         reporter.info("Exiting workflow for manual referencing")
         return WorkflowResult(STOPPED_FOR_MANUAL_REFERENCING, warnings, outputs)
+
+    # Last chance to move the chunk. See the docstring.
+    if on_mesh_complete is not None:
+        on_mesh_complete(chunk)
+        update_and_save(doc, reporter)
 
     if chunk.elevation is None:
         reporter.step("Building DEM")

@@ -187,6 +187,51 @@ class ExportSettings:
 
 
 @dataclass
+class IcpSettings:
+    """Surface-matching alignment for plots with no permanent markers.
+
+    Where permanent corner targets exist, marker alignment is strictly better:
+    it is exact, fast, and independently checkable. ICP is for the case where
+    only temporary targets were used, so each visit is georeferenced and
+    scaled separately and the two timepoints land within roughly 0.1-2 m of
+    each other but are not registered.
+
+    Defaults mirror 03_align_chunks_ICP.py. Repeat surveys of one scene are
+    the same scale, and start close enough that global feature matching is
+    both unnecessary and unreliable on this kind of data.
+
+    `master_source` defaults to the mesh: it is far denser and more evenly
+    sampled than tie points, so it gives a much tighter fit. That is also why
+    ICP runs after the new chunk's mesh is built rather than straight after
+    alignment.
+    """
+    enabled: bool = False
+    moving_source: str = "mesh"    # "mesh", "tie_points" or "auto"
+    master_source: str = "mesh"
+    scale_ratio: float = 1.0
+    target_resolution: float = 0.01
+    use_initial_alignment: bool = True
+    crop_to_overlap: bool = True
+    use_generalized_icp: bool = False
+
+    # Fit quality below this raises a warning without failing the job. ICP
+    # always returns *a* transform, and with no permanent markers there is
+    # nothing independent to check it against, so the fit statistics are the
+    # only signal that something went wrong. Deliberately lenient pending
+    # real-world calibration -- better to under-warn than to cry wolf on every
+    # job and train the user to ignore it.
+    min_fitness: float = 0.5
+    max_rmse: float = 0.05
+
+
+ICP_SOURCES = [
+    ("Mesh (denser, tighter fit)", "mesh"),
+    ("Tie points (faster, coarser)", "tie_points"),
+    ("Mesh if available, else tie points", "auto"),
+]
+
+
+@dataclass
 class ResourceSettings:
     """Per-process hardware limits, applied by the worker before processing.
 
@@ -304,6 +349,8 @@ class Job:
     export: ExportSettings = field(default_factory=ExportSettings)
     georef: GeorefSettings = field(default_factory=GeorefSettings)
     resources: ResourceSettings = field(default_factory=ResourceSettings)
+    # Re-photography only, and only when no permanent markers exist.
+    icp: IcpSettings = field(default_factory=IcpSettings)
 
     # -- runtime state (persisted so a crashed GUI can resume the batch) --
     status: str = PENDING
@@ -390,7 +437,7 @@ class Job:
     def from_dict(cls, data: Optional[dict]) -> "Job":
         data = data or {}
         known = {f.name for f in fields(cls)}
-        nested = {"processing", "export", "georef", "resources"}
+        nested = {"processing", "export", "georef", "resources", "icp"}
         plain = {k: v for k, v in data.items()
                  if k in known and k not in nested}
         job = cls(**plain)
@@ -398,6 +445,7 @@ class Job:
         job.export = _from_dict(ExportSettings, data.get("export"))
         job.georef = _from_dict(GeorefSettings, data.get("georef"))
         job.resources = _from_dict(ResourceSettings, data.get("resources"))
+        job.icp = _from_dict(IcpSettings, data.get("icp"))
         return job
 
 
