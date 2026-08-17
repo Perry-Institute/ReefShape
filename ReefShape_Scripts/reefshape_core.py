@@ -636,6 +636,160 @@ def referencing_problem(chunk, resolution, reporter):
         "onwards.".format(width, height, resolution, cells / 1e9))
 
 
+# --------------------------------------------------------------------------
+# TagLab project files
+# --------------------------------------------------------------------------
+
+def read_tiff_size(path):
+    """(width, height) of a TIFF, without any imaging library.
+
+    Handles classic TIFF and BigTIFF, which is required rather than optional:
+    these exports set tiff_big, so a large plot comes out as BigTIFF, whose
+    header layout differs from classic (8-byte offsets, 20-byte IFD entries).
+
+    Reading the file is the only way to get these numbers honestly. The
+    orthomosaic's own width and height describe the *unclipped* raster, while
+    the TagLab export is clipped to the plot boundary, so they disagree --
+    and TagLab uses the dimensions to place annotations.
+    """
+    with open(path, "rb") as handle:
+        header = handle.read(16)
+        if len(header) < 8:
+            raise ValueError("{} is too short to be a TIFF".format(path))
+
+        byte_order = header[0:2]
+        if byte_order == b"II":
+            endian = "<"
+        elif byte_order == b"MM":
+            endian = ">"
+        else:
+            raise ValueError("{} is not a TIFF".format(path))
+
+        import struct
+        version = struct.unpack(endian + "H", header[2:4])[0]
+
+        if version == 42:            # classic TIFF
+            offset = struct.unpack(endian + "I", header[4:8])[0]
+            entry_size, count_format, count_size = 12, "H", 2
+            value_format, value_size = "I", 4
+        elif version == 43:          # BigTIFF
+            offset = struct.unpack(endian + "Q", header[8:16])[0]
+            entry_size, count_format, count_size = 20, "Q", 8
+            value_format, value_size = "Q", 8
+        else:
+            raise ValueError("{} has unknown TIFF version {}".format(path, version))
+
+        handle.seek(offset)
+        entry_count = struct.unpack(
+            endian + count_format, handle.read(count_size))[0]
+
+        width = height = None
+        for _ in range(entry_count):
+            entry = handle.read(entry_size)
+            if len(entry) < entry_size:
+                break
+            tag, field_type = struct.unpack(endian + "HH", entry[:4])
+            if tag not in (256, 257):       # ImageWidth, ImageLength
+                continue
+            raw = entry[entry_size - value_size:]
+            # These tags are SHORT (3) or LONG (4); BigTIFF may use LONG8 (16).
+            if field_type == 3:
+                value = struct.unpack(endian + "H", raw[:2])[0]
+            elif field_type == 4:
+                value = struct.unpack(endian + "I", raw[:4])[0]
+            else:
+                value = struct.unpack(endian + value_format, raw[:value_size])[0]
+            if tag == 256:
+                width = value
+            else:
+                height = value
+
+        if width is None or height is None:
+            raise ValueError("{} has no image dimensions".format(path))
+        return width, height
+
+
+def _taglab_path(path):
+    """Absolute path with forward slashes, as TagLab writes them."""
+    return os.path.abspath(path).replace(os.sep, "/")
+
+
+def write_taglab_project(taglab_dir, project_name, chunk, ortho_path,
+                         dem_path, ortho_resolution):
+    """Write a TagLab project (.json) describing this timepoint.
+
+    Written for every plot, re-photography or not. A single-timepoint project
+    opens directly in TagLab, and a revisit can be appended onto an existing
+    project from inside TagLab -- which is a better division of labour than
+    trying to merge annotation projects from out here, where we cannot see
+    what the user has already annotated.
+
+    The schema mirrors a project saved by TagLab itself; empty collections are
+    written as TagLab writes them so the file loads without complaint.
+    """
+    label = chunk.label or "timepoint"
+    json_path = os.path.join(
+        taglab_dir, "{}_{}.json".format(project_name, label))
+
+    width, height = read_tiff_size(ortho_path)
+
+    # TagLab works in millimetres per pixel; the workflow works in metres.
+    # Prefer the orthomosaic's actual resolution over the requested one, which
+    # is 0 when Metashape was left to choose.
+    resolution_m = ortho_resolution or (
+        chunk.orthomosaic.resolution if chunk.orthomosaic else 0.0)
+    px_to_mm = "{:g}".format(resolution_m * 1000.0)
+
+    # TagLab wants an ISO date; the ReefShape convention makes the chunk label
+    # the capture date already.
+    try:
+        acquisition_date = datetime.strptime(label, "%Y%m%d").strftime("%Y-%m-%d")
+    except ValueError:
+        acquisition_date = ""
+
+    ortho = _taglab_path(ortho_path)
+    project = {
+        "filename": _taglab_path(json_path),
+        "working_area": None,
+        "working_area_angle": 0.0,
+        "images": [
+            {
+                "rect": [0.0, 0.0, 0.0, 0.0],
+                "map_px_to_mm_factor": px_to_mm,
+                "width": width,
+                "height": height,
+                "annotations": {"regions": [], "points": []},
+                "layers": [],
+                "channels": [
+                    {"filename": ortho, "type": "RGB"},
+                    {"filename": _taglab_path(dem_path), "type": "DEM"},
+                ],
+                "id": label,
+                "name": label,
+                "workspace": [],
+                "export_dataset_area": [],
+                "acquisition_date": acquisition_date,
+                "georef_filename": ortho,
+                "metadata": {},
+                "sampling_areas": [],
+                "grid": None,
+            }
+        ],
+        "correspondences": {},
+        "genet": {},
+        "region_attributes": {"name": "", "description": "", "data": []},
+        "spatial_reference_system": None,
+        "metadata": {},
+        "image_metadata_template": {},
+        "markers": {},
+    }
+
+    import json
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(project, handle, indent=1)
+    return json_path
+
+
 def clean_project(chunk):
     """Drop intermediates that are large and cheap to regenerate."""
     ortho = chunk.orthomosaic
@@ -1037,13 +1191,18 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         taglab_dir = os.path.join(output_dir, "taglab_outputs")
         os.makedirs(taglab_dir, exist_ok=True)
 
+        # Single files, JPEG-compressed. TagLab used to require images under
+        # 32767 px per side and uncompressed, which forced these exports to be
+        # split into blocks and written LZW. It now accepts large JPEG-
+        # compressed images, so a plot arrives as one file at a fraction of
+        # the size.
         reporter.step("Exporting TagLab orthomosaic")
         taglab_ortho = os.path.join(
             taglab_dir, "{}_{}.tif".format(project_name, chunk.label))
         chunk.exportRaster(
             path=taglab_ortho, resolution=ortho_res,
-            source_data=Metashape.OrthomosaicData, block_width=32767,
-            block_height=32767, split_in_blocks=True, image_compression=lzw,
+            source_data=Metashape.OrthomosaicData, split_in_blocks=False,
+            image_compression=jpg,
             save_kml=False, save_world=False, save_scheme=False,
             save_alpha=True, image_description="", network_links=True,
             global_profile=False, min_zoom_level=-1, max_zoom_level=-1,
@@ -1052,13 +1211,19 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
             progress=reporter.progress_callback())
         outputs.append(taglab_ortho)
 
+        # The DEM keeps LZW: it holds float elevations, and JPEG is lossy in a
+        # way that would corrupt the measurements TagLab reads off it.
+        # resolution=dem_res (0) exports at the DEM's own resolution rather
+        # than resampling it up to the orthomosaic's -- typically 2 mm against
+        # a 0.5 mm ortho, which is the whole point of the earlier resample
+        # step. Passing ortho_res here would have undone it.
         reporter.step("Exporting TagLab DEM")
         taglab_dem = os.path.join(
             taglab_dir, "{}_{}_DEM.tif".format(project_name, chunk.label))
         chunk.exportRaster(
-            path=taglab_dem, resolution=ortho_res, nodata_value=-5,
-            source_data=Metashape.ElevationData, block_width=32767,
-            block_height=32767, split_in_blocks=True, image_compression=lzw,
+            path=taglab_dem, resolution=dem_res, nodata_value=-5,
+            source_data=Metashape.ElevationData, split_in_blocks=False,
+            image_compression=lzw,
             save_kml=False, save_world=False, save_scheme=False,
             save_alpha=True, image_description="", network_links=True,
             global_profile=False, min_zoom_level=-1, max_zoom_level=-1,
@@ -1066,6 +1231,22 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
             description="Generated by Agisoft Metashape",
             progress=reporter.progress_callback())
         outputs.append(taglab_dem)
+
+        reporter.step("Writing TagLab project")
+        try:
+            taglab_project = write_taglab_project(
+                taglab_dir, project_name, chunk, taglab_ortho, taglab_dem,
+                ortho_res)
+            outputs.append(taglab_project)
+            reporter.info("  TagLab project: {}".format(taglab_project))
+        except Exception as exc:
+            # A missing .json costs the user a few minutes setting the
+            # timepoint up by hand; it is not worth discarding the rasters
+            # that took hours to build.
+            warnings.append(
+                "TagLab project file could not be written ({}). The "
+                "orthomosaic and DEM were exported and can be loaded into "
+                "TagLab manually.".format(exc))
 
     # ---------------- 4. Clean up ----------------
 
