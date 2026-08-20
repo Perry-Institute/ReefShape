@@ -349,7 +349,9 @@ def main(argv):
 
     started = time.time()
     try:
-        with open(job_path, "r", encoding="utf-8") as fh:
+        # utf-8-sig: job files can be hand-edited, and Windows editors add a
+        # BOM that plain utf-8 rejects with an unhelpful decode error.
+        with open(job_path, "r", encoding="utf-8-sig") as fh:
             job = json.load(fh)
     except (OSError, ValueError) as exc:
         protocol.emit(protocol.FAILED, msg="Could not read job file: {}".format(exc))

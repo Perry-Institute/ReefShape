@@ -176,7 +176,11 @@ class Batch:
     @classmethod
     def load(cls, path: str) -> "Batch":
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            # utf-8-sig: a .rsbatch is meant to be hand-editable (repointing
+            # twenty jobs at a moved drive should be a find-and-replace), and
+            # Windows editors add a BOM that plain utf-8 rejects with an
+            # unhelpful decode error.
+            with open(path, "r", encoding="utf-8-sig") as fh:
                 data = json.load(fh)
         except OSError as exc:
             raise BatchFileError("Could not read {}: {}".format(path, exc))
