@@ -47,7 +47,7 @@ This installer must stay next to the ReefShape_Scripts folder. If you moved it
 out of the ReefShape folder, put it back and run it again."
 
 for required in "01_full_reefshape_workflow.py" "ui_components.py" \
-                "reefshape_core.py" "modules/pip_auto_install.py"; do
+                "modules/reefshape_core.py" "modules/pip_auto_install.py"; do
     [ -f "$SOURCE/$required" ] || die "The ReefShape_Scripts folder is missing $required.
 
 It looks incomplete. Re-download ReefShape and try again."

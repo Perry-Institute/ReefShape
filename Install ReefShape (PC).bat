@@ -46,7 +46,7 @@ if not exist "%SOURCE%" (
 for %%R in (
     "01_full_reefshape_workflow.py"
     "ui_components.py"
-    "reefshape_core.py"
+    "modules\reefshape_core.py"
     "modules\pip_auto_install.py"
 ) do (
     if not exist "%SOURCE%\%%~R" (

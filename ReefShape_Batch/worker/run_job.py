@@ -8,8 +8,8 @@ in Metashape fails this job, not the whole queue), cancellation (kill the
 process), and parallelism (run several).
 
 The processing itself is not implemented here -- it lives in
-`ReefShape_Scripts/reefshape_core.py`, shared with the Metashape menu script so
-the batch runner and the menu cannot drift apart. This module is only the
+`ReefShape_Scripts/modules/`, shared with the menu scripts so the batch
+runner and the menu cannot drift apart. This module is only the
 plumbing around it: read the job, set up the document and chunk, add the
 photos, run the workflow, report what happened.
 
@@ -30,20 +30,21 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)                    # ReefShape_Batch
 _REPO = os.path.dirname(_ROOT)                    # repository root
 
-# reefshape_core ships with the Metashape scripts, because the menu scripts
-# import it too. Prefer the copy next to this checkout; fall back to the
-# installed scripts directory so the batch app keeps working when it has been
-# copied somewhere else on its own.
+# The processing modules live in ReefShape_Scripts/modules/ -- a package,
+# so Metashape does not auto-execute them as menu scripts and their globals
+# cannot collide with another script's. Prefer the copy next to this
+# checkout; fall back to the installed scripts directory so the batch app
+# keeps working when it has been copied somewhere else on its own.
 for candidate in (os.path.join(_REPO, "ReefShape_Scripts"),
                   os.path.join(_ROOT, "worker")):
-    if os.path.isfile(os.path.join(candidate, "reefshape_core.py")):
+    if os.path.isfile(os.path.join(candidate, "modules", "reefshape_core.py")):
         sys.path.insert(0, candidate)
         break
 sys.path.insert(0, _ROOT)
 
-import reefshape_core                                    # noqa: E402
-import reefshape_align                                   # noqa: E402
-from reefshape_core import WorkflowSettings, WorkflowError  # noqa: E402
+from modules import reefshape_core                                    # noqa: E402
+from modules import reefshape_align                                   # noqa: E402
+from modules.reefshape_core import WorkflowSettings, WorkflowError  # noqa: E402
 from batch import protocol                               # noqa: E402
 
 
@@ -275,7 +276,7 @@ def _make_icp_hook(doc, job, icp, reference_chunk, reporter):
     moves with the transform, whereas the DEM and orthomosaic are rasters in
     world space.
     """
-    import reefshape_icp  # noqa: E402 -- deferred; see reefshape_icp docstring
+    from modules import reefshape_icp  # noqa: E402 -- deferred; see reefshape_icp docstring
 
     def on_mesh_complete(chunk):
         reporter.step("ICP alignment to {!r}".format(reference_chunk.label))

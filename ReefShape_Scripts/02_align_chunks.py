@@ -25,8 +25,8 @@ import csv
 import re
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
 from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
-import reefshape_align
-from reefshape_core import Reporter, WorkflowError
+from modules import reefshape_align
+from modules.reefshape_core import Reporter, WorkflowError
 
 
 class AlignChunksDlg(QtWidgets.QDialog):
