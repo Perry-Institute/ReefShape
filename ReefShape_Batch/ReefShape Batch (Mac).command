@@ -2,21 +2,25 @@
 # ---------------------------------------------------------------------
 # ReefShape Batch launcher (macOS)
 #
-# Runs the batch GUI on the Python interpreter bundled inside MetashapePro.app
-# so the user needs no Python installation of their own.
+# Picks a Python interpreter that can actually draw a window, and runs the
+# batch GUI on it.
+#
+# "Can actually draw a window" is the operative part. An earlier version
+# guessed at where Metashape keeps its bundled Python from a short list of
+# paths; when the guess missed it silently fell through to whatever `python3`
+# was on PATH, which on one machine had no Qt binding at all and died with a
+# bare ModuleNotFoundError. So candidates are now discovered by searching the
+# app bundle, and each one is *tested* -- if it cannot import PySide, it is not
+# a candidate, whatever its path suggests.
 #
 # Unlike Windows -- where batch/qt.py can fix the library search path from
 # inside the process with os.add_dll_directory -- the macOS dynamic loader
-# reads DYLD_FRAMEWORK_PATH only at process start. So the framework path has
-# to be exported *here*, before Python launches, or PySide2 will fail to find
-# Metashape's Qt frameworks.
+# reads DYLD_FRAMEWORK_PATH only at process start, so it is exported here
+# before any interpreter is tested or launched.
 #
 # Set REEFSHAPE_METASHAPE to an app bundle to override discovery, e.g.
 #   export REEFSHAPE_METASHAPE="/Applications/MetashapePro 2.2.app"
-#
-# NOTE: the exact bundled-Python and framework layout inside MetashapePro.app
-# has not yet been verified on a real Mac; the globs below are deliberately
-# permissive. See the "macOS support and end-to-end verification" task.
+# Set REEFSHAPE_PYTHON to force a specific interpreter.
 # ---------------------------------------------------------------------
 
 set -u
@@ -24,11 +28,26 @@ set -u
 APPDIR="$(cd "$(dirname "$0")" && pwd)"
 
 die() {
-    # A .command file opens Terminal, so echo is visible -- but also raise a
-    # dialog in case it was launched some other way.
     echo "ERROR: $1" >&2
     /usr/bin/osascript -e "display dialog \"$1\" with title \"ReefShape Batch\" buttons {\"OK\"} default button \"OK\" with icon stop" >/dev/null 2>&1 || true
     exit 1
+}
+
+# True if $1 is an interpreter with a usable Qt binding. Tests QtWidgets
+# rather than the top-level package: the package imports fine on an install
+# whose Qt shared libraries cannot be loaded, so checking only the top level
+# would accept an interpreter that fails later, at the point where there is no
+# Qt available to report it with.
+has_qt() {
+    "$1" -c 'import PySide6.QtWidgets' >/dev/null 2>&1 && return 0
+    "$1" -c 'import PySide2.QtWidgets' >/dev/null 2>&1 && return 0
+    return 1
+}
+
+qt_binding() {
+    "$1" -c 'import PySide6; print("PySide6")' 2>/dev/null && return 0
+    "$1" -c 'import PySide2; print("PySide2")' 2>/dev/null && return 0
+    echo "none"
 }
 
 # --- Locate the Metashape app bundle -----------------------------------
@@ -39,38 +58,24 @@ if [ -n "${REEFSHAPE_METASHAPE:-}" ] && [ -d "$REEFSHAPE_METASHAPE" ]; then
 fi
 
 if [ -z "$MSAPP" ]; then
-    # Reverse sort so a newer versioned bundle ("MetashapePro 2.3.app") wins
-    # over an older one kept alongside it. Agisoft has shipped the bundle as
-    # both "MetashapePro.app" and "Metashape Pro.app", hence the loose glob.
+    # Reverse sort so a newer versioned bundle wins over an older one kept
+    # alongside it. Agisoft has shipped the bundle as both "MetashapePro.app"
+    # and "Metashape Pro.app", hence the loose glob.
     while IFS= read -r candidate; do
         [ -n "$candidate" ] || continue
-        if [ -x "$candidate/Contents/MacOS/MetashapePro" ]; then
+        if [ -x "$candidate/Contents/MacOS/MetashapePro" ] \
+           || [ -x "$candidate/Contents/MacOS/Metashape" ]; then
             MSAPP="$candidate"
             break
         fi
     done < <(ls -d /Applications/*etashape*.app "$HOME"/Applications/*etashape*.app 2>/dev/null | sort -r)
 fi
 
-# --- Pick an interpreter -----------------------------------------------
-# Prefer Metashape's bundled Python. Falling back to a system python3 still
-# gets the user to the app's own "Metashape not found" dialog, where they can
-# point at the install by hand -- better than dying here.
-PYEXE=""
 if [ -n "$MSAPP" ]; then
+    echo "Metashape:  $MSAPP"
     export REEFSHAPE_METASHAPE="$MSAPP"
 
-    for base in "$MSAPP/Contents/Frameworks/python" \
-                "$MSAPP/Contents/MacOS/python" \
-                "$MSAPP/Contents/Resources/python"; do
-        [ -d "$base" ] || continue
-        for candidate in "$base"/bin/python3.*; do
-            if [ -x "$candidate" ]; then PYEXE="$candidate"; break; fi
-        done
-        [ -z "$PYEXE" ] && [ -x "$base/bin/python3" ] && PYEXE="$base/bin/python3"
-        [ -n "$PYEXE" ] && break
-    done
-
-    # Must be exported before Python starts; see the header comment.
+    # Must be exported before any interpreter starts; see the header.
     FRAMEWORKS="$MSAPP/Contents/Frameworks"
     if [ -d "$FRAMEWORKS" ]; then
         export DYLD_FRAMEWORK_PATH="${FRAMEWORKS}${DYLD_FRAMEWORK_PATH:+:$DYLD_FRAMEWORK_PATH}"
@@ -80,15 +85,82 @@ if [ -n "$MSAPP" ]; then
         export QT_PLUGIN_PATH="$MSAPP/Contents/PlugIns"
         export QT_QPA_PLATFORM_PLUGIN_PATH="$MSAPP/Contents/PlugIns/platforms"
     fi
+else
+    echo "Metashape:  not found (the app can still start; it will ask you to locate it)"
 fi
 
-if [ -z "$PYEXE" ]; then
-    PYEXE="$(command -v python3 || true)"
+# --- Collect candidate interpreters ------------------------------------
+# Order matters: the first one that passes the Qt test wins.
+CANDIDATES=()
+
+if [ -n "${REEFSHAPE_PYTHON:-}" ]; then
+    CANDIDATES+=("$REEFSHAPE_PYTHON")
 fi
 
-if [ -z "$PYEXE" ]; then
-    die "Could not find a Python interpreter to run ReefShape Batch. Agisoft Metashape Professional does not appear to be installed in a standard location. Set REEFSHAPE_METASHAPE to its .app bundle and try again."
+if [ -n "$MSAPP" ]; then
+    # Known layouts first, so the common case costs nothing.
+    for pattern in \
+        "$MSAPP"/Contents/Frameworks/python/bin/python3* \
+        "$MSAPP"/Contents/MacOS/python/bin/python3* \
+        "$MSAPP"/Contents/Resources/python/bin/python3* \
+        "$MSAPP"/Contents/Frameworks/Python.framework/Versions/*/bin/python3* \
+        "$MSAPP"/Contents/Resources/Python.framework/Versions/*/bin/python3*
+    do
+        [ -x "$pattern" ] && CANDIDATES+=("$pattern")
+    done
+
+    # Nothing in the known layouts: search the bundle. Slower, but it is the
+    # difference between working on a layout we have never seen and failing on
+    # one. Only reached when the fast paths all miss.
+    if [ ${#CANDIDATES[@]} -eq 0 ]; then
+        echo "Searching the Metashape bundle for a bundled Python..."
+        while IFS= read -r found; do
+            [ -x "$found" ] && CANDIDATES+=("$found")
+        done < <(find "$MSAPP" -type f -name 'python3*' 2>/dev/null | sort -r)
+    fi
 fi
+
+# System interpreters last: Metashape's own is preferred because it is the
+# one guaranteed to match the Metashape being driven.
+for sys_py in "$(command -v python3 || true)" \
+              /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3
+do
+    [ -n "$sys_py" ] && [ -x "$sys_py" ] && CANDIDATES+=("$sys_py")
+done
+
+# --- Pick the first candidate that can actually import Qt ---------------
+PYEXE=""
+TRIED=""
+for candidate in "${CANDIDATES[@]:-}"; do
+    [ -n "$candidate" ] || continue
+    case " $TRIED " in *" $candidate "*) continue ;; esac
+    TRIED="$TRIED $candidate"
+    if has_qt "$candidate"; then
+        PYEXE="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYEXE" ]; then
+    DETAIL=""
+    for candidate in $TRIED; do
+        DETAIL="$DETAIL
+  $candidate"
+    done
+    [ -z "$DETAIL" ] && DETAIL="
+  (no Python interpreters found at all)"
+    die "ReefShape Batch needs a Python with the PySide6 (or PySide2) Qt bindings, and none of the interpreters it found has them.
+
+Tried:$DETAIL
+
+The simplest fix is to install PySide6 into your system Python:
+    pip3 install PySide6
+
+Then run this launcher again. To use a specific interpreter instead, set REEFSHAPE_PYTHON to its full path."
+fi
+
+echo "Python:     $PYEXE"
+echo "Qt binding: $(qt_binding "$PYEXE")"
 
 # Run from the app directory so `batch` is importable as a package.
 cd "$APPDIR" || die "Could not enter $APPDIR"

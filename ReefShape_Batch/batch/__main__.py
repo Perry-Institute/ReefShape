@@ -84,19 +84,97 @@ def _report_startup_failure(exc_text):
     except OSError:
         pass
 
-    # Lead with the most common cause and its fix. The traceback goes in the
-    # log; a wall of it in a message box helps nobody.
-    _native_message_box(
-        "ReefShape Batch failed to start",
-        "ReefShape Batch could not start.\n\n"
-        "This usually means Agisoft Metashape Professional is not installed, "
-        "or is installed somewhere ReefShape Batch could not find.\n\n"
-        "Details were written to:\n{}\n\n{}".format(
-            log, exc_text.strip().splitlines()[-1] if exc_text.strip() else "")
-    )
+    last_line = exc_text.strip().splitlines()[-1] if exc_text.strip() else ""
+
+    # Name the actual cause. A missing Qt binding is not a missing Metashape,
+    # and saying so sends the user looking in entirely the wrong place --
+    # which is exactly what happened on a Mac where Metashape was installed
+    # correctly but the interpreter that got picked had no PySide.
+    if "PySide" in last_line or "PySide" in exc_text:
+        message = (
+            "ReefShape Batch could not start because the Python it is running "
+            "on has no Qt bindings installed.\n\n"
+            "Install them with:\n"
+            "    pip3 install PySide6\n\n"
+            "This is not a problem with your Metashape installation.\n\n"
+            "Details were written to:\n{}\n\n{}".format(log, last_line))
+    else:
+        message = (
+            "ReefShape Batch could not start.\n\n"
+            "This usually means Agisoft Metashape Professional is not "
+            "installed, or is installed somewhere ReefShape Batch could not "
+            "find.\n\n"
+            "Details were written to:\n{}\n\n{}".format(log, last_line))
+
+    _native_message_box("ReefShape Batch failed to start", message)
+
+
+def _check_without_qt():
+    """Report the environment using nothing but the standard library.
+
+    Deliberately does not import `batch.app`, because that imports Qt -- and
+    the moment you most need a diagnostic is when Qt is the thing that will
+    not load. Prints what interpreter is running, whether a Qt binding is
+    importable, and where Metashape was found.
+    """
+    import importlib.util
+
+    print("Interpreter:          {}".format(sys.executable))
+    print("Python:               {}".format(sys.version.split()[0]))
+    print("Platform:             {}".format(sys.platform))
+
+    # Metashape first, and bootstrap before testing Qt. On Windows the bundled
+    # PySide2 cannot be imported until Metashape's root is on the DLL search
+    # path, so testing the binding before this reports a false NONE on a
+    # perfectly working install.
+    install = None
+    try:
+        from . import metashape_locate
+        install = metashape_locate.find_install()
+        print("Metashape root:       {}".format(install.root))
+        print("Metashape executable: {}".format(install.executable))
+        print("Bundled Python:       {}".format(
+            install.python or "not found (using a system Python)"))
+        metashape_locate.bootstrap_qt(install)
+    except Exception as exc:
+        print("Metashape:            NOT FOUND")
+        print("  {}".format(str(exc).splitlines()[0]))
+
+    binding = None
+    for name in ("PySide6", "PySide2"):
+        if importlib.util.find_spec(name) is None:
+            continue
+        try:
+            __import__(name + ".QtWidgets")
+            binding = name
+            break
+        except ImportError as exc:
+            print("{:22}found, but its Qt libraries would not load: {}"
+                  .format(name + ":", exc))
+
+    if binding:
+        print("Qt binding:           {}".format(binding))
+    else:
+        pip = "pip3" if sys.platform != "win32" else "pip"
+        print("Qt binding:           NONE -- install one with: "
+              "{} install PySide6".format(pip))
+
+    print("\nResult: {}".format(
+        "OK" if (binding and install) else "PROBLEMS FOUND"))
+    return 0 if (binding and install) else 1
 
 
 def main():
+    # Handled before importing anything Qt-dependent, so it still works on the
+    # machine where Qt is the problem.
+    if "--check" in sys.argv:
+        try:
+            return _check_without_qt()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            return 1
+
     try:
         from .app import main as app_main
     except Exception:

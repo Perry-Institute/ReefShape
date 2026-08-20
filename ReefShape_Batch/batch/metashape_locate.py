@@ -261,23 +261,52 @@ class Install:
             return exe if exe.is_file() else None
 
         if sys.platform == "darwin":
-            bases = [self.root / "Contents" / "Frameworks" / "python",
-                     self.root / "Contents" / "MacOS" / "python",
-                     self.root / "Contents" / "Resources" / "python"]
+            # Several layouts, because Agisoft has used more than one and the
+            # cost of guessing wrong is the app falling back to a system
+            # interpreter that may have no Qt at all. Versioned names sort
+            # first so we bind to a real interpreter rather than the bare
+            # `python3` symlink.
+            patterns = [
+                self.root / "Contents" / "Frameworks" / "python" / "bin" / "python3*",
+                self.root / "Contents" / "MacOS" / "python" / "bin" / "python3*",
+                self.root / "Contents" / "Resources" / "python" / "bin" / "python3*",
+                self.root / "Contents" / "Frameworks" / "Python.framework"
+                / "Versions" / "*" / "bin" / "python3*",
+                self.root / "Contents" / "Resources" / "Python.framework"
+                / "Versions" / "*" / "bin" / "python3*",
+            ]
         else:
-            bases = [self.root / "python"]
+            patterns = [self.root / "python" / "bin" / "python3*"]
 
-        for base in bases:
-            if not base.is_dir():
+        for pattern in patterns:
+            for match in sorted(glob.glob(str(pattern)), reverse=True):
+                if os.path.isfile(match) and os.access(match, os.X_OK):
+                    return Path(match)
+
+        # Last resort: walk the install looking for any `bin/python3*`. Only
+        # reached when every known layout misses, which is precisely the case
+        # where guessing has already failed and a slow answer beats none.
+        return self._search_for_python()
+
+    def _search_for_python(self) -> Optional[Path]:
+        """Walk the installation for a bundled interpreter.
+
+        Bounded by depth so an unexpected symlink cannot turn this into a walk
+        of the whole filesystem, and it stops at the first hit.
+        """
+        root_depth = len(self.root.parts)
+        for dirpath, dirnames, filenames in os.walk(str(self.root)):
+            if len(Path(dirpath).parts) - root_depth > 6:
+                dirnames[:] = []
                 continue
-            # Prefer a versioned name (python3.12) over the bare `python3`
-            # symlink so we bind to a real interpreter.
-            matches = sorted(glob.glob(str(base / "bin" / "python3.*")),
-                             reverse=True)
-            matches.append(str(base / "bin" / "python3"))
-            for m in matches:
-                if os.path.isfile(m) and os.access(m, os.X_OK):
-                    return Path(m)
+            if os.path.basename(dirpath) != "bin":
+                continue
+            for name in sorted(filenames, reverse=True):
+                if not name.startswith("python3"):
+                    continue
+                candidate = os.path.join(dirpath, name)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    return Path(candidate)
         return None
 
     def _find_plugins(self) -> Optional[Path]:
