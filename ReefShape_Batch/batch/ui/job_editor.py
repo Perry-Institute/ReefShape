@@ -29,6 +29,10 @@ class JobEditor(QtWidgets.QDialog):
         self.job = job
         self.templates = templates or store.load_templates()
         self._project_info = None
+        # Set from the probe when a reference chunk is chosen: a revisit
+        # inherits the earlier timepoint's boundary during alignment, which
+        # overrides whatever boundary source is selected.
+        self._reference_has_boundary = False
 
         # Set before any widget exists. Populating the form fires the same
         # signals a user's clicks would, and those handlers write the form
@@ -339,6 +343,7 @@ class JobEditor(QtWidgets.QDialog):
             self.georef_check.setChecked(True)
         if enabled:
             self._check_icp_dependencies()
+        self._on_boundary_changed()
         self._revalidate()
 
     def _check_icp_dependencies(self):
@@ -707,6 +712,20 @@ class JobEditor(QtWidgets.QDialog):
 
     def _on_boundary_changed(self):
         """Spell out the consequence of turning the boundary off."""
+        # A revisit copies the earlier timepoint's boundary during alignment,
+        # and the workflow keeps a boundary that already exists rather than
+        # replacing it -- so the selection below would have no effect.
+        if self._reference_has_boundary and not self.job.icp.enabled:
+            self.boundary_combo.setEnabled(False)
+            self.boundary_note.setText(
+                "<span style='color:#1a7f37;'>The reference chunk's boundary "
+                "will be copied to this timepoint during alignment and used "
+                "for the exports, so the two plots cover the same ground. "
+                "This setting will not be used.</span>")
+            self._revalidate()
+            return
+
+        self.boundary_combo.setEnabled(True)
         source = models.BOUNDARY_SOURCES[
             self.boundary_combo.currentIndex()][1]
         if source == models.BOUNDARY_NONE:
@@ -752,6 +771,8 @@ class JobEditor(QtWidgets.QDialog):
 
         self._adopt_reference_crs(chunk)
         self._show_reference_settings(chunk)
+        self._reference_has_boundary = bool(chunk.get("has_outer_boundary"))
+        self._on_boundary_changed()
 
         # Hide targets that carry scale but no georeference -- a scalebar is
         # repositioned every visit, so asking whether one moved has only one

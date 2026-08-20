@@ -600,6 +600,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.addphotos_groupbox.setComplete(project_complete)
         self.addphotos_groupbox.setCollapsed(project_complete)
 
+        self.onBoundaryChange()
+
         self.general_groupbox.setComplete(general_complete)
         self.general_groupbox.setCollapsed(general_complete)
 
@@ -859,8 +861,35 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
     def onBoundaryChange(self):
         '''
-        Slot: spell out that turning the boundary off also turns off TagLab.
+        Slot: explain what the current boundary selection will do.
+
+        An existing boundary takes precedence over all of it -- the workflow
+        keeps whatever is already there rather than replacing it. That is the
+        normal state for a re-photography chunk, where Align Timepoints has
+        already copied the boundary across from the earlier timepoint, so the
+        dropdown is disabled and says why rather than letting someone
+        configure a setting that will be ignored.
         '''
+        existing = None
+        try:
+            existing = reefshape_core.find_outer_boundary(self.chunk)
+        except Exception:
+            pass
+
+        if existing is not None:
+            self.comboBoundary.setEnabled(False)
+            self.labelBoundary.setEnabled(False)
+            self.labelBoundaryNote.setText(
+                "This chunk already has a boundary polygon ({}), which will "
+                "be kept and used for the exports. Delete it in Metashape "
+                "first if you want a new one built.".format(
+                    existing.label or "unnamed"))
+            self.labelBoundaryNote.setStyleSheet("color: #1a7f37;")
+            return
+
+        self.comboBoundary.setEnabled(True)
+        self.labelBoundary.setEnabled(True)
+
         source = reefshape_core.BOUNDARY_SOURCES[
             self.comboBoundary.currentIndex()][1]
         if source == reefshape_core.BOUNDARY_NONE:
