@@ -462,143 +462,6 @@ class AddPhotosGroupBox(CollapsibleGroupBox):
     
 
 
-class BoundaryMarkerDlg(QtWidgets.QDialog):
-    '''
-    Optional sub-dialog box in which the user can specify the arrangement of the corner
-    markers for georeferencing.
-
-    This class does not actually modify the georeferencing file or the active chunk's markers,
-    it is used only to get user input as to how the boundary creation may be adjusted for different
-    marker placement scenarios. See the boundaryCreation() and create_shape_from_markers() functions
-    in FullUW_dialog.py to see how this functionality is implemented.
-
-    The main output from this class is the corner_markers list, which is a list of integers
-    representing the corner markers of a photomosaic plot in clockwise order, e.g.
-    [top-left, top-right, bottom-right, bottom-left]
-    '''
-    def __init__(self, parent):
-        self.corner_markers = [] # initialize return value to empty list
-
-        # initialize main dialog window
-        QtWidgets.QDialog.__init__(self, parent)
-        self.setWindowTitle("Corner Marker Positions")
-
-        # ---- create widgets ----
-        self.labelCornerPositioning = QtWidgets.QLabel("Each auto-detectable marker is numbered with a " +
-                                        "unique integer. When setting up a plot, it is best to place the " +
-                                        "corner markers around the plot such that they are in numeric order " +
-                                        "going clockwise or counterclockwise, as shown as the default below. However, if the " +
-                                        "markers were placed in a different arrangement, you may specify that " +
-                                        "arrangement here. This will enable the script to draw the bounding " +
-                                        "box for the plot correctly.\n\n")
-        self.labelCornerPositioning.setToolTip("The orientation of the plot does not matter, only the relative " +
-                                        "positions of the markers around it.\nFor example, the default " +
-                                        "arrangement below could also be specified by setting the top-left to target " +
-                                        "4,\nthe top-right to target 3, the bottom-right to target 2, and the bottom-left " +
-                                        "to target 1")
-        self.labelCornerPositioning.setWordWrap(True)
-        # self.labelCornerPositioning.setAlignment(QtCore.Qt.AlignCenter)
-
-        self.labelCorner1 = QtWidgets.QLabel("NW target number: ")
-        self.spinboxCorner1 = QtWidgets.QSpinBox()
-        self.spinboxCorner1.setMinimum(1)
-        self.spinboxCorner1.setValue(4)
-
-        self.labelCorner2 = QtWidgets.QLabel("NE target number: ")
-        self.spinboxCorner2 = QtWidgets.QSpinBox()
-        self.spinboxCorner2.setMinimum(1)
-        self.spinboxCorner2.setValue(1)
-
-        self.labelCorner3 = QtWidgets.QLabel("SE target number: ")
-        self.spinboxCorner3 = QtWidgets.QSpinBox()
-        self.spinboxCorner3.setMinimum(1)
-        self.spinboxCorner3.setValue(2)
-
-        self.labelCorner4 = QtWidgets.QLabel("SW target number: ")
-        self.spinboxCorner4 = QtWidgets.QSpinBox()
-        self.spinboxCorner4.setMinimum(1)
-        self.spinboxCorner4.setValue(3)
-
-        self.btnOk = QtWidgets.QPushButton("Ok")
-        self.btnOk.setFixedSize(70, 40)
-        self.btnOk.setToolTip("Set Marker Positions")
-
-        self.btnClose = QtWidgets.QPushButton("Close")
-        self.btnClose.setFixedSize(70, 40)
-
-        # ---- create layouts to hold widgets ----
-        corner1_layout = QtWidgets.QHBoxLayout()
-        corner1_layout.addWidget(self.labelCorner1)
-        corner1_layout.addWidget(self.spinboxCorner1)
-
-        corner2_layout = QtWidgets.QHBoxLayout()
-        corner2_layout.addWidget(self.labelCorner2)
-        corner2_layout.addWidget(self.spinboxCorner2)
-
-        corner3_layout = QtWidgets.QHBoxLayout()
-        corner3_layout.addWidget(self.labelCorner3)
-        corner3_layout.addWidget(self.spinboxCorner3)
-
-        corner4_layout = QtWidgets.QHBoxLayout()
-        corner4_layout.addWidget(self.labelCorner4)
-        corner4_layout.addWidget(self.spinboxCorner4)
-
-        ok_layout = QtWidgets.QHBoxLayout()
-        ok_layout.addWidget(self.btnOk)
-        ok_layout.addWidget(self.btnClose)
-
-        # create grid layout to arrange target inputs in a rectangle
-        plot_layout = QtWidgets.QGridLayout()
-        plot_layout.setColumnStretch(0, 1)
-        plot_layout.setColumnStretch(1, 10)
-        plot_layout.setColumnMinimumWidth(1, 150)
-        plot_layout.setColumnStretch(2, 1)
-        plot_layout.setRowStretch(0, 1)
-        plot_layout.setRowStretch(1, 10)
-        plot_layout.setRowMinimumHeight(1, 150)
-        plot_layout.setRowStretch(2, 1)
-
-        # create a groupbox to act as a plot rectangle
-        plot_groupbox = QtWidgets.QGroupBox()
-        plot_label = QtWidgets.QLabel("Reef Plot")
-        plot_label.setAlignment(QtCore.Qt.AlignCenter)
-        plot_label.setEnabled(False)
-
-        inner_layout = QtWidgets.QHBoxLayout()
-        inner_layout.addWidget(plot_label)
-        plot_groupbox.setLayout(inner_layout)
-
-        # ---- assemble layouts into main layout ----
-        main_layout = QtWidgets.QVBoxLayout()
-        main_layout.addWidget(self.labelCornerPositioning)
-        plot_layout.addLayout(corner1_layout, 0, 0)
-        plot_layout.addLayout(corner2_layout, 0, 2)
-        plot_layout.addWidget(plot_groupbox, 1, 1)
-        plot_layout.addLayout(corner3_layout, 2, 2)
-        plot_layout.addLayout(corner4_layout, 2, 0)
-        main_layout.addLayout(plot_layout)
-        main_layout.addLayout(ok_layout)
-
-        self.setLayout(main_layout)
-
-        # ---- connect signals and slots ----
-        self.btnOk.clicked.connect(self.ok)
-        self.btnClose.clicked.connect(self.reject)
-
-    def ok(self):
-        '''
-        Slot for user to set corner marker values and close the dialog - ensures that there is a valid
-        return value only if the user clicks ok. A more integrated Qt way to do this might be to
-        reimplement the core 'accept()' slot, but this way is a bit simpler.
-
-        For this specific use case, making sure there is a valid return isn't really necessary since there
-        will be a default value in the main dialog anyway, but it's good practice and keeps the script a bit more flexible
-        '''
-        self.corner_markers = [self.spinboxCorner1.value(), self.spinboxCorner2.value(), self.spinboxCorner3.value(), self.spinboxCorner4.value()]
-        self.reject()
-
-
-
 class GeoreferenceGroupBox(CollapsibleGroupBox):
     '''
     Groupbox holding widgets used for importing scaling and georeferencing information into an
@@ -620,8 +483,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         # used scalebar file across sessions.
         self.scalebars_path = ""
         self.georef_path = ""
-        # set default corner marker arrangement
-        self.corner_markers = [1, 2, 3, 4]
 
         # -- Build Widgets --
         # scaling/georeferencing type
@@ -668,9 +529,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         self.txtGeoFile.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.txtGeoFile.setReadOnly(True)
 
-        self.btnMarkerPosition = QtWidgets.QPushButton("Adjust Corner Markers")
-        # self.btnMarkerPosition.setEnabled(False)
-        # self.btnMarkerPosition.setFixedWidth(75)
 
         # add in spinbox widgets to define georeferencing format
         self.labelInputFormatting = QtWidgets.QLabel("Specify which columns in the georeferencing file correspond to the indicated properties")
@@ -727,10 +585,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         geo_layout.addWidget(self.txtGeoFile)
         geo_layout.addWidget(self.btnGeoFile)
 
-        marker_pos_layout = QtWidgets.QHBoxLayout()
-        marker_pos_layout.addStretch()
-        marker_pos_layout.addWidget(self.btnMarkerPosition)
-
         ref_format_layout = QtWidgets.QGridLayout()
         ref_format_layout.setColumnStretch(0, 1)
         ref_format_layout.setColumnStretch(1, 10)
@@ -770,7 +624,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         reference_layout.addLayout(autodetect_layout)
         reference_layout.addLayout(scale_layout)
         reference_layout.addLayout(geo_layout)
-        reference_layout.addLayout(marker_pos_layout)
         reference_layout.addWidget(self.ref_format_groupbox)
         # Absorb vertical slack at the bottom — without this, when the dialog
         # is taller than the natural content height the gap between the
@@ -784,7 +637,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         self.btnGeoFile.clicked.connect(self.getGeoFile)
         self.comboReference.currentIndexChanged.connect(self.onReferenceChanged)
         self.comboTargetType.currentIndexChanged.connect(self.onTargetTypeChange)
-        self.btnMarkerPosition.clicked.connect(self.getMarkerPosition)
 
     def getScaleFile(self):
         # maybe change this to local variable and get text value from text box directly when workflow is run?
@@ -820,15 +672,6 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
         self.labelGeoFile.setEnabled(self.autoDetectMarkers)
         self.btnGeoFile.setEnabled(self.autoDetectMarkers)
         self.txtGeoFile.setEnabled(self.autoDetectMarkers)
-
-    def getMarkerPosition(self):
-        '''
-        Slot: Launches a sub-dialog box where the user can specify the arrangement of
-        corner markers.
-        '''
-        marker_dlg = BoundaryMarkerDlg(self.parent)
-        marker_dlg.exec()
-        self.corner_markers = marker_dlg.corner_markers
 
     def onTargetTypeChange(self):
         '''

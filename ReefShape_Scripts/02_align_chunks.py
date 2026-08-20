@@ -24,7 +24,7 @@ import sys
 import csv
 import re
 from PySide2 import QtGui, QtCore, QtWidgets # NOTE: the style enums (such as alignment) seem to be in QtCore.Qt
-from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
+from ui_components import AddPhotosGroupBox, CollapsibleGroupBox, GeoreferenceGroupBox
 from modules import reefshape_align
 from modules.reefshape_core import Reporter, WorkflowError
 
@@ -48,9 +48,6 @@ class AlignChunksDlg(QtWidgets.QDialog):
         self.chunk_keys = []
         self.output_dir = self.project_folder
         self.damaged_markers = []
-
-        # set default corner marker arrangement - is this needed for timepoint two?
-        self.corner_markers = [1, 2, 3, 4]
 
         # ---- Project Setup Groupbox ----
         # create project setup groupbox - this is a modified AddPhotosGroupBox

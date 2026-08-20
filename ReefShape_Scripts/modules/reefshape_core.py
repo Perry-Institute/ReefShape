@@ -153,7 +153,6 @@ class WorkflowSettings:
                  scalebar_path="",
                  georef_path="",
                  ref_formatting=None,
-                 corner_markers=None,
                  output_dir="",
                  export_report=True,
                  export_gis=True,
@@ -173,7 +172,6 @@ class WorkflowSettings:
         # Column layout of the georeferencing CSV, 1-based, in the order
         # referenceModel expects: label, x, y, z, x_acc, y_acc, z_acc, skip.
         self.ref_formatting = ref_formatting or [1, 3, 2, 4, 5, 5, 6, 2]
-        self.corner_markers = corner_markers or [1, 2, 3, 4]
 
         self.output_dir = output_dir
         self.export_report = export_report
@@ -248,7 +246,6 @@ class WorkflowSettings:
             scalebar_path=georef.get("scalebar_path", ""),
             georef_path=georef.get("georef_path", ""),
             ref_formatting=ref_formatting,
-            corner_markers=georef.get("corner_markers", [1, 2, 3, 4]),
             output_dir=export.get("output_dir", "") or os.path.dirname(project_path),
             export_report=export.get("report", True),
             export_gis=export.get("gis_outputs", True),
@@ -461,14 +458,106 @@ def grad_selects_optimization(chunk):
 # Boundary
 # --------------------------------------------------------------------------
 
-def create_shape_from_markers(chunk, markers):
-    """Build an OuterBoundary polygon through `markers`, in the order given."""
+def project_markers(chunk, markers):
+    """Project markers into shape CRS as [(x, y, marker), ...].
+
+    Markers with no estimated position are dropped -- they were never placed,
+    or never converged, so there is no location to build a boundary from.
+    """
+    transform = chunk.transform.matrix
+    shape_crs = chunk.shapes.crs if chunk.shapes else chunk.crs
+    projected = []
+    for marker in markers:
+        if marker.position is None:
+            continue
+        point = shape_crs.project(transform.mulp(marker.position))
+        projected.append((point.x, point.y, marker))
+    return projected
+
+
+def _monotone_chain(points):
+    """Convex hull of [(x, y, payload), ...], counter-clockwise.
+
+    Andrew's monotone chain. Hand-rolled rather than taken from scipy or
+    shapely because this module is imported on every Metashape startup by
+    script 01, and a twenty-line algorithm is not worth making every user
+    wait on a pip install for.
+    """
+    pts = sorted(points, key=lambda p: (p[0], p[1]))
+    if len(pts) <= 2:
+        return pts
+
+    def half(sequence):
+        out = []
+        for p in sequence:
+            # Pop while the last turn is not a left turn, which drops both
+            # interior points and collinear ones. Collinear vertices add
+            # nothing to the polygon's shape, so losing them is harmless.
+            while len(out) >= 2:
+                (x1, y1) = out[-2][0], out[-2][1]
+                (x2, y2) = out[-1][0], out[-1][1]
+                if (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1) <= 0:
+                    out.pop()
+                else:
+                    break
+            out.append(p)
+        return out
+
+    return half(pts)[:-1] + half(list(reversed(pts)))[:-1]
+
+
+def hull_order(chunk, markers):
+    """Order `markers` counter-clockwise around their convex hull.
+
+    This is what removes the need to tell ReefShape which target sits at
+    which corner. Stringing markers together in whatever order they were
+    listed produces a self-intersecting polygon most of the time -- with four
+    corners, 16 of the 24 possible orderings cross -- and the hull is the same
+    polygon regardless of input order.
+
+    Convex rather than a concave ordering (angular sort about the centroid)
+    on purpose: a marker that is georeferenced but sits *inside* the plot, as
+    a control point rather than a corner, is ignored by the hull. An angular
+    sort would thread the boundary through it and cut a notch out of the plot.
+    The trade is that a genuinely concave plot gets over-covered, which for
+    rectangular reef plots does not arise -- and where it does, the
+    photo-coverage boundary describes the surveyed area better anyway.
+    """
+    projected = project_markers(chunk, markers)
+    if len(projected) < 3:
+        return [entry[2] for entry in projected]
+    return [entry[2] for entry in _monotone_chain(projected)]
+
+
+def corner_markers(chunk):
+    """Markers that define the plot outline.
+
+    A marker with a reference location is one whose real-world position was
+    imported from the georeferencing file (or, for a revisit, carried over
+    from the earlier timepoint), which is exactly the set that marks the plot.
+    Scalebar targets are excluded automatically because they carry scale, not
+    position -- with no name matching, no digit parsing and no fixed count, so
+    a plot with six corners works the same as one with four.
+    """
+    return [m for m in chunk.markers
+            if m.position is not None
+            and m.reference is not None
+            and m.reference.location is not None]
+
+
+def create_shape_from_markers(chunk, markers, label="Marker Boundary"):
+    """Build an OuterBoundary polygon through `markers`, in the order given.
+
+    Order is taken as authoritative -- `hull_order` supplies it for the
+    automatic path, and script 06 supplies the user's own sequence when they
+    want a shape the hull would not produce.
+    """
     if not chunk:
         print("Empty project, script aborted")
         return False
-    if len(markers) < 4:
-        print("At least four markers required to create a plot. "
-              "Boundary creation aborted.")
+    if len(markers) < 3:
+        print("At least three markers are required to create a boundary; "
+              "got {}.".format(len(markers)))
         return False
 
     transform = chunk.transform.matrix
@@ -480,40 +569,43 @@ def create_shape_from_markers(chunk, markers):
     coords = [shape_crs.project(transform.mulp(m.position)) for m in markers]
 
     shape = chunk.shapes.addShape()
-    shape.label = "Marker Boundary"
+    shape.label = label
     shape.geometry.type = Metashape.Geometry.Type.PolygonType
     shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
     shape.geometry = Metashape.Geometry.Polygon(coords)
     return True
 
 
-def boundary_creation(chunk, corner_markers):
-    """Create the plot boundary from the four corner markers.
+def boundary_creation(chunk, reporter=None):
+    """Create the plot boundary from the chunk's georeferenced markers.
 
-    Iterates `corner_markers` in the order supplied so the polygon follows
-    that cyclic order; listing the corners out of cyclic order produces a
-    self-intersecting boundary, which is why the order is a user setting
-    rather than sorted here.
+    Takes every marker with a reference location and walks their convex hull,
+    so the result does not depend on how the targets were numbered or in what
+    order they happen to appear.
     """
-    found = []
-    for corner in corner_markers:
-        for marker in chunk.markers:
-            # Skip markers we cannot place: no estimated position, or no
-            # digits in the label to match the corner number against.
-            if marker.position is None:
-                continue
-            digits = re.search(r"(\d+)", marker.label)
-            if digits is None:
-                continue
-            if str(corner) == digits.group(0):
-                found.append(marker)
-                break
+    log = reporter.info if reporter is not None else print
 
-    if len(found) < 4:
-        print("Could not find all 4 corner markers {} in the chunk. "
-              "Boundary creation skipped.".format(corner_markers))
+    candidates = corner_markers(chunk)
+    if len(candidates) < 3:
+        log("  only {} georeferenced marker(s) in this chunk; a boundary "
+            "needs at least 3.".format(len(candidates)))
         return False
-    return create_shape_from_markers(chunk, found[:4])
+
+    ordered = hull_order(chunk, candidates)
+    if len(ordered) < 3:
+        log("  the georeferenced markers are collinear, so they enclose no "
+            "area.")
+        return False
+
+    if len(ordered) < len(candidates):
+        # Interior markers, or collinear ones along an edge. Both are fine to
+        # drop -- the polygon still encloses every marker.
+        log("  {} of {} georeferenced markers form the plot outline; the rest "
+            "fall inside it.".format(len(ordered), len(candidates)))
+
+    log("  boundary from markers: {}".format(
+        ", ".join(m.label for m in ordered)))
+    return create_shape_from_markers(chunk, ordered)
 
 
 def find_outer_boundary(chunk):
@@ -630,7 +722,7 @@ def referencing_problem(chunk, resolution, reporter):
         "A reef plot this size is almost certainly a scaling problem rather "
         "than a real survey extent. Check that:\n"
         "  - the scalebar file matches the targets actually in this chunk\n"
-        "  - all four corner markers were detected and correctly numbered\n"
+        "  - the corner markers were detected and georeferenced\n"
         "  - the georeferencing file's column layout is set correctly\n\n"
         "Correct the referencing, then re-run to continue from the DEM "
         "onwards.".format(width, height, resolution, cells / 1e9))
@@ -1080,7 +1172,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     has_boundary = find_outer_boundary(chunk) is not None
     if not has_boundary:
         reporter.step("Creating boundary")
-        has_boundary = boundary_creation(chunk, settings.corner_markers)
+        has_boundary = boundary_creation(chunk, reporter)
         if has_boundary:
             reporter.info(" --- Boundary Polygon Created ---")
         else:
@@ -1103,9 +1195,9 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     export_taglab = settings.export_taglab
     if not has_boundary:
         warnings.append(
-            "Boundary polygon could not be created from corner markers {} -- "
-            "they were not all found in the chunk."
-            .format(settings.corner_markers))
+            "Boundary polygon could not be created from the chunk's "
+            "georeferenced markers -- there were fewer than three, or "
+            "they enclose no area.")
 
         if export_taglab:
             reporter.step("Creating boundary from photo coverage")

@@ -214,60 +214,6 @@ class GeorefColumnsWidget(QtWidgets.QGroupBox):
             spin.setValue(getattr(georef, name, spin.value()))
 
 
-class CornerMarkersWidget(QtWidgets.QGroupBox):
-    """The four corner targets, in cyclic order around the plot.
-
-    Order decides the boundary polygon's winding, so listing them out of
-    cyclic order produces a self-intersecting boundary. Laid out as a rectangle
-    for the same reason the Metashape dialog does it: it makes the intended
-    order obvious without having to explain it.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__("Corner markers", parent)
-        grid = QtWidgets.QGridLayout(self)
-
-        hint = QtWidgets.QLabel(
-            "Target numbers at each corner of the plot. Any rotation is fine "
-            "as long as they go around the plot in order.")
-        hint.setWordWrap(True)
-        grid.addWidget(hint, 0, 0, 1, 3)
-
-        self.nw, self.ne, self.se, self.sw = (
-            QtWidgets.QSpinBox() for _ in range(4))
-        for spin, value in ((self.nw, 1), (self.ne, 2),
-                            (self.se, 3), (self.sw, 4)):
-            spin.setMinimum(1)
-            spin.setMaximum(999)
-            spin.setValue(value)
-
-        for spin, label, row, col in ((self.nw, "NW", 1, 0), (self.ne, "NE", 1, 2),
-                                      (self.sw, "SW", 3, 0), (self.se, "SE", 3, 2)):
-            cell = QtWidgets.QHBoxLayout()
-            cell.addWidget(QtWidgets.QLabel(label + ":"))
-            cell.addWidget(spin)
-            grid.addLayout(cell, row, col)
-
-        plot = QtWidgets.QLabel("Reef plot")
-        plot.setAlignment(QtCore.Qt.AlignCenter)
-        plot.setFrameShape(QtWidgets.QFrame.Box)
-        plot.setMinimumSize(110, 60)
-        plot.setEnabled(False)
-        grid.addWidget(plot, 2, 1)
-        grid.setColumnStretch(1, 1)
-
-    def values(self):
-        # Clockwise from NW, which is the cyclic order the boundary builder
-        # walks.
-        return [self.nw.value(), self.ne.value(),
-                self.se.value(), self.sw.value()]
-
-    def setValues(self, corners):
-        if len(corners) == 4:
-            for spin, value in zip((self.nw, self.ne, self.se, self.sw), corners):
-                spin.setValue(int(value))
-
-
 def issue_summary_html(issues):
     """Format validation issues as HTML for a label."""
     if not issues:

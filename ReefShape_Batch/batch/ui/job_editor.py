@@ -20,7 +20,7 @@ from ..qt import QtCore, QtWidgets, exec_
 from .. import models, probe, store
 from ..models import Job, NEW_PLOT, REPHOTO
 from .widgets import (PathRow, CRSPicker, GeorefColumnsWidget,
-                      CornerMarkersWidget, issue_summary_html)
+                      issue_summary_html)
 
 
 class JobEditor(QtWidgets.QDialog):
@@ -422,13 +422,14 @@ class JobEditor(QtWidgets.QDialog):
         layout.addWidget(self.georef_file_row)
 
         self.columns_widget = GeorefColumnsWidget()
-        self.corners_widget = CornerMarkersWidget()
         layout.addWidget(self.columns_widget)
-        layout.addWidget(self.corners_widget)
 
+        # The plot outline is derived from the georeferenced markers
+        # themselves (convex hull), so there is no corner arrangement to
+        # configure any more.
         self._georef_dependents = [
             self.target_combo, self.scalebar_row, self.georef_file_row,
-            self.columns_widget, self.corners_widget]
+            self.columns_widget]
 
     def _build_processing_section(self):
         layout = self._section("Processing")
@@ -516,7 +517,6 @@ class JobEditor(QtWidgets.QDialog):
             self.scalebar_row.setPath(job.georef.scalebar_path)
             self.georef_file_row.setPath(job.georef.georef_path)
             self.columns_widget.setValues(job.georef)
-            self.corners_widget.setValues(job.georef.corner_markers)
 
         if self.crs_picker is not None:
             self.crs_picker.setWkt(job.processing.crs_wkt,
@@ -593,7 +593,6 @@ class JobEditor(QtWidgets.QDialog):
         job.georef.georef_path = self.georef_file_row.path()
         for name, value in self.columns_widget.values().items():
             setattr(job.georef, name, value)
-        job.georef.corner_markers = self.corners_widget.values()
 
         if job.kind == REPHOTO:
             job.icp.enabled = self.icp_check.isChecked()

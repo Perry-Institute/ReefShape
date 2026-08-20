@@ -140,10 +140,6 @@ class GeorefSettings:
     col_z_accuracy: int = 6
     skip_rows: int = 2
 
-    # Corner markers in cyclic order (NW, NE, SE, SW by default) -- the order
-    # decides the boundary polygon's winding, so a non-cyclic list produces a
-    # self-intersecting boundary.
-    corner_markers: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
 
     def ref_formatting(self) -> List[int]:
         """The 8-element list the workflow's referenceModel() expects."""
@@ -560,8 +556,6 @@ def validate_job(job: Job) -> List[Issue]:
             err("Georeferencing is enabled but no georeferencing file was selected.")
         elif not os.path.isfile(job.georef.georef_path):
             err("Georeferencing file does not exist: {}".format(job.georef.georef_path))
-        if len(set(job.georef.corner_markers)) != 4:
-            err("Corner markers must be four distinct target numbers.")
     elif job.kind == NEW_PLOT:
         # The workflow deliberately stops after mesh building so the user can
         # reference, level and scale by hand. That is a sensible interactive

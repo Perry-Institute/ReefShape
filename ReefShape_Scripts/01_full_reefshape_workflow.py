@@ -20,7 +20,7 @@ import re
 #import exifread
 from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets
-from ui_components import AddPhotosGroupBox, BoundaryMarkerDlg, CollapsibleGroupBox, GeoreferenceGroupBox
+from ui_components import AddPhotosGroupBox, CollapsibleGroupBox, GeoreferenceGroupBox
 from modules import reefshape_core
 from modules.reefshape_core import WorkflowSettings, WorkflowError
 
@@ -795,7 +795,6 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 georef.spinboxRefY.value(), georef.spinboxRefZ.value(),
                 georef.spinboxXAcc.value(), georef.spinboxYAcc.value(),
                 georef.spinboxZAcc.value(), georef.spinboxSkipRows.value()],
-            corner_markers=georef.corner_markers,
 
             output_dir=self.output_dir,
             export_report=self.checkBoxReport.isChecked(),
