@@ -137,6 +137,9 @@ if exist "%MANIFEST%" (
         "07_calculate_area_ratio.py"
         "08_clean_project.py"
         "09_create_boundary_from_photos.py"
+        "reefshape_core.py"
+        "reefshape_align.py"
+        "reefshape_icp.py"
     ) do (
         if not exist "%SOURCE%\%%~N" (
             if exist "%TARGET%\%%~N" (

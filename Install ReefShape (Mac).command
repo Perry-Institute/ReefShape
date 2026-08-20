@@ -120,7 +120,8 @@ else
         "02a_align_chunks_ICP.py" "03_optimization_process.py" \
         "04_scale_model.py" "05_create_boundary.py" "06_copy_boundary.py" \
         "07_calculate_area_ratio.py" "08_clean_project.py" \
-        "09_create_boundary_from_photos.py"
+        "09_create_boundary_from_photos.py" \
+        "reefshape_core.py" "reefshape_align.py" "reefshape_icp.py"
     do
         remove_if_ours "$name"
     done
