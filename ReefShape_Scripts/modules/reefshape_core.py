@@ -1091,25 +1091,57 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
 
     # TagLab products are only useful clipped to the plot -- an uncropped one
     # carries the whole survey's overshoot and would have to be re-exported
-    # before it could be annotated. So a missing boundary skips that export
-    # rather than producing something misleading, and rather than failing a
-    # run whose other outputs are perfectly good.
+    # before it could be annotated.
+    #
+    # Corner markers are the preferred source: they mark the plot itself, so
+    # the boundary is the same every visit and timepoints stay comparable.
+    # Failing that, the union of the camera footprints describes the area
+    # actually surveyed, which is a good enough clip to annotate against and
+    # far better than skipping the export. It is derived from where the
+    # photographer swam, though, so it will differ between visits -- hence the
+    # warning rather than silent substitution.
     export_taglab = settings.export_taglab
     if not has_boundary:
         warnings.append(
-            "Boundary polygon could not be created automatically -- corner "
-            "markers {} were not all found in the chunk. The boundary "
-            "shapefile export was skipped. To produce a boundary, run script "
-            "06 (corner markers) or script 08 (from camera footprints) and "
-            "re-run this workflow.".format(settings.corner_markers))
+            "Boundary polygon could not be created from corner markers {} -- "
+            "they were not all found in the chunk."
+            .format(settings.corner_markers))
 
         if export_taglab:
-            export_taglab = False
+            reporter.step("Creating boundary from photo coverage")
+            try:
+                from modules import reefshape_boundary
+                vertices = reefshape_boundary.create_boundary_from_photos(
+                    chunk, reporter=reporter)
+                has_boundary = find_outer_boundary(chunk) is not None
+                if has_boundary:
+                    update_and_save(doc, reporter)
+                    warnings.append(
+                        "The plot boundary was derived from photo coverage "
+                        "({} vertices) rather than from corner markers, "
+                        "because the corner markers were not found. It "
+                        "follows the area actually photographed, so it will "
+                        "not match the boundary of other timepoints exactly. "
+                        "Check it before comparing timepoints."
+                        .format(vertices))
+            except Exception as exc:
+                # Never fatal: the orthomosaic, DEM and report are already
+                # built and are worth keeping.
+                reporter.warn(
+                    "Could not derive a boundary from photo coverage: "
+                    "{}".format(exc))
+
+        if not has_boundary:
             warnings.append(
-                "TagLab outputs were skipped: they must be clipped to the "
-                "plot boundary, and no boundary polygon was available. "
-                "Everything else was exported. Create a boundary and re-run "
-                "to produce them.")
+                "The boundary shapefile export was skipped. To produce a "
+                "boundary, run script 06 (corner markers) or script 08 (from "
+                "camera footprints) and re-run this workflow.")
+            if export_taglab:
+                export_taglab = False
+                warnings.append(
+                    "TagLab outputs were skipped: they must be clipped to the "
+                    "plot boundary, and none could be created. Everything "
+                    "else was exported.")
 
     jpg = Metashape.ImageCompression()
     jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG

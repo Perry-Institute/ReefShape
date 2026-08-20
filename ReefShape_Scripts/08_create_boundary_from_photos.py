@@ -57,170 +57,20 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 
-# ---------------------------------------------------------------------------
-# Footprint estimation
-# ---------------------------------------------------------------------------
+# The computation lives in modules/reefshape_boundary.py so that
+# reefshape_core can use it too -- the batch runner falls back to a
+# photo boundary when a plot has no corner markers but its TagLab
+# exports need one. This script is the interactive front end for it.
+from modules.reefshape_boundary import (
+    BoundaryError,
+    DEFAULT_FOOTPRINT_M,
+    create_boundary_from_photos,
+    _compute_coverage_polygon,
+    _create_outer_boundary_shape_from_crs,
+    _estimate_photo_footprint,
+    _estimate_seafloor_z,
+)
 
-def _estimate_seafloor_z(chunk):
-    """Return median Z of the chunk's tie-point cloud, or None if unavailable.
-
-    Used as the "seafloor altitude" in chunk-local coords. Sampled rather than
-    iterated fully (the median is robust and Python-side iteration over big
-    tie-point clouds is slow).
-    """
-    if not chunk.tie_points or not chunk.tie_points.points:
-        return None
-    pts = chunk.tie_points.points
-    sample = min(2000, len(pts))
-    step = max(1, len(pts) // sample)
-    z_samples = [pts[i].coord.z for i in range(0, len(pts), step)
-                 if pts[i].valid]
-    if not z_samples:
-        return None
-    return float(np.median(z_samples))
-
-
-def _estimate_photo_footprint(chunk):
-    """Estimate the inscribed-circle radius (m) of a single photo's ground
-    footprint, from camera altitude + lens FOV.
-
-    Returns None if any required input is missing (no tie points, no sensor
-    calibration, no aligned cameras). The dialog falls back to a 0.75 m default
-    in that case.
-
-    Math: half_footprint = altitude * min(sensor.width, sensor.height) / (2 * f)
-    This is the radius of the largest circle that fits entirely inside the
-    rectangular photo footprint on the ground (the "inscribed circle"). It's
-    a conservative estimate of "how far out from the camera center the photo
-    reliably covers" — using the half-diagonal instead would overshoot by
-    ~30%+ for typical 3:2 sensors and produce boundaries clearly too far out.
-    """
-    if not chunk.sensors:
-        return None
-    sensor = chunk.sensors[0]
-    if not sensor.calibration or sensor.calibration.f <= 0:
-        return None
-
-    seafloor_z = _estimate_seafloor_z(chunk)
-    if seafloor_z is None:
-        return None
-
-    cam_zs = [cam.center.z for cam in chunk.cameras if cam.transform is not None]
-    if not cam_zs:
-        return None
-    altitude = abs(float(np.median(cam_zs)) - seafloor_z)
-    if altitude <= 0:
-        return None
-
-    short_side_pixels = min(sensor.width, sensor.height)
-    return altitude * short_side_pixels / (2.0 * sensor.calibration.f)
-
-
-# ---------------------------------------------------------------------------
-# Coverage polygon (raster morphology)
-# ---------------------------------------------------------------------------
-
-def _compute_coverage_polygon(camera_xy, footprint):
-    """Compute the outer boundary of camera coverage via vector buffered union.
-
-    Each camera position is buffered into a circle of radius `footprint`,
-    all circles are unioned with shapely, and the exterior ring of the
-    largest component is returned. This is a pure vector pipeline — no
-    rasterization in the loop, so the result is smooth by construction
-    (the only geometric approximation is the per-circle vertex count
-    set by `quad_segs` below) and there is no resolution-dependent
-    staircase to clean up afterwards.
-
-    History: an earlier version of this function splatted camera positions
-    onto a binary raster, dilated with scipy.ndimage, polygonized with
-    rasterio.features.shapes, and then ran RDP + Chaikin to fight the
-    pixel-edge staircase artifacts. All of that was working around the
-    rasterization step, which existed only because scipy.ndimage made
-    binary dilation/union/hole-fill easy without an extra dep. Switching
-    to shapely's vector union eliminates the round-trip through raster
-    entirely; no post-processing needed.
-
-    `camera_xy` is an (N, 2) numpy array of camera positions (in any
-    units). `footprint` is the per-camera buffer radius (in the same
-    units). Returns a list of (x, y) tuples — the boundary polygon's
-    exterior, with the closing-vertex duplicate dropped.
-    """
-    if len(camera_xy) == 0 or footprint <= 0:
-        return []
-    # quad_segs is the number of vertices per quadrant of each circle —
-    # 16 gives 64 vertices per buffered point, smooth at any zoom level
-    # that makes geometric sense for a reef plot. Higher values are
-    # progressively wasted; lower values would bring back visible
-    # polygonal facets.
-    circles = [Point(float(x), float(y)).buffer(footprint, quad_segs=16)
-               for x, y in camera_xy]
-    union = unary_union(circles)
-    if union.is_empty:
-        return []
-    # Multi-polygon means cameras formed disjoint clusters; keep the
-    # largest by area (drops outlier cameras far from the main cluster).
-    if union.geom_type == "MultiPolygon":
-        union = max(union.geoms, key=lambda p: p.area)
-    # Reconstruct from just the exterior ring to drop any interior holes
-    # (e.g. small uncovered patches between cameras) — users want a single
-    # hole-free boundary for clipping outputs.
-    outer = Polygon(union.exterior)
-    # Light Douglas-Peucker simplification trims co-linear vertices that
-    # shapely's union sometimes leaves along straight stretches where many
-    # circles butt up tangentially. Tolerance is a tiny fraction of the
-    # footprint — visually indistinguishable, but cuts vertex count.
-    outer = outer.simplify(footprint * 0.01)
-    coords = list(outer.exterior.coords)
-    # shapely's exterior.coords closes the ring with a duplicate of the
-    # first vertex; drop it so downstream code doesn't have to special-case.
-    if coords and coords[0] == coords[-1]:
-        coords = coords[:-1]
-    return [(float(x), float(y)) for x, y in coords]
-
-
-# ---------------------------------------------------------------------------
-# Metashape shape creation
-# ---------------------------------------------------------------------------
-
-def _create_outer_boundary_shape_from_crs(chunk, boundary_xy_crs, z_crs, label):
-    """Add an OuterBoundary polygon to the chunk from vertices already in shape CRS.
-
-    All vertices share the same `z_crs` so the polygon is flat (a tilted
-    polygon would appear horizontally offset when projected top-down in the
-    ortho view). Z barely matters for OuterBoundary clipping (it's a 2D
-    operation) — it just has to be consistent across vertices.
-
-    After creation, calls `chunk.shapes.updateAltitudes([shape])` (added in
-    Metashape 2.3) so the polygon's vertices are snapped to the DEM surface
-    rather than left at the median camera altitude. The method is missing on
-    older Metashape versions, so we guard with hasattr.
-    """
-    if not chunk.shapes:
-        chunk.shapes = Metashape.Shapes()
-        chunk.shapes.crs = chunk.crs
-    coords = [Metashape.Vector([float(x), float(y), float(z_crs)])
-              for x, y in boundary_xy_crs]
-
-    shape = chunk.shapes.addShape()
-    shape.label = label
-    shape.geometry.type = Metashape.Geometry.Type.PolygonType
-    shape.boundary_type = Metashape.Shape.BoundaryType.OuterBoundary
-    shape.geometry = Metashape.Geometry.Polygon(coords)
-
-    # Clamp vertices to the DEM surface (no-op on Metashape <2.3, which
-    # didn't expose this method to Python — the polygon stays at z_crs).
-    if hasattr(chunk.shapes, "updateAltitudes"):
-        try:
-            chunk.shapes.updateAltitudes([shape])
-        except Exception as exc:
-            print("Note: updateAltitudes failed ({}). "
-                  "Polygon left at constant Z.".format(exc))
-
-    return shape
-
-
-# ---------------------------------------------------------------------------
-# Dialog
 # ---------------------------------------------------------------------------
 
 class PhotoBoundaryDlg(QtWidgets.QDialog):
