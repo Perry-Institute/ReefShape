@@ -58,6 +58,24 @@ PROJECTION_ACCURACY = 15.0
 # of disk for no downstream benefit.
 DEM_RESAMPLE_FACTOR = 4
 
+# Where the plot boundary comes from.
+#
+# Markers is the default and the best option wherever corner targets exist:
+# the boundary is tied to the plot itself, so it is identical every visit and
+# timepoints stay directly comparable. Photo coverage follows where the
+# photographer actually swam, which shifts between visits. None skips the
+# boundary entirely -- and with it the TagLab exports, which have nothing to
+# clip to.
+BOUNDARY_MARKERS = "markers"
+BOUNDARY_PHOTOS = "photos"
+BOUNDARY_NONE = "none"
+
+BOUNDARY_SOURCES = [
+    ("Corner markers (convex hull)", BOUNDARY_MARKERS),
+    ("Photo coverage", BOUNDARY_PHOTOS),
+    ("Do not create a boundary", BOUNDARY_NONE),
+]
+
 # Outcomes of run_workflow.
 COMPLETED = "completed"
 STOPPED_FOR_MANUAL_REFERENCING = "stopped_for_manual_referencing"
@@ -153,6 +171,7 @@ class WorkflowSettings:
                  scalebar_path="",
                  georef_path="",
                  ref_formatting=None,
+                 boundary_source=BOUNDARY_MARKERS,
                  output_dir="",
                  export_report=True,
                  export_gis=True,
@@ -172,6 +191,8 @@ class WorkflowSettings:
         # Column layout of the georeferencing CSV, 1-based, in the order
         # referenceModel expects: label, x, y, z, x_acc, y_acc, z_acc, skip.
         self.ref_formatting = ref_formatting or [1, 3, 2, 4, 5, 5, 6, 2]
+        # See BOUNDARY_SOURCES.
+        self.boundary_source = boundary_source
 
         self.output_dir = output_dir
         self.export_report = export_report
@@ -246,6 +267,7 @@ class WorkflowSettings:
             scalebar_path=georef.get("scalebar_path", ""),
             georef_path=georef.get("georef_path", ""),
             ref_formatting=ref_formatting,
+            boundary_source=processing.get("boundary_source", BOUNDARY_MARKERS),
             output_dir=export.get("output_dir", "") or os.path.dirname(project_path),
             export_report=export.get("report", True),
             export_gis=export.get("gis_outputs", True),
@@ -1170,70 +1192,78 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     # Skip when a boundary already exists, e.g. copied from a reference chunk
     # by the timepoint alignment step.
     has_boundary = find_outer_boundary(chunk) is not None
-    if not has_boundary:
-        reporter.step("Creating boundary")
+    source = settings.boundary_source
+
+    def try_photo_boundary(reason):
+        """Derive a boundary from camera coverage. True if one was created."""
+        reporter.step("Creating boundary from photo coverage")
+        try:
+            from modules import reefshape_boundary
+            vertices = reefshape_boundary.create_boundary_from_photos(
+                chunk, reporter=reporter)
+        except Exception as exc:
+            # Never fatal: the orthomosaic, DEM and report are already built
+            # and are worth keeping.
+            reporter.warn("Could not derive a boundary from photo coverage: "
+                          "{}".format(exc))
+            return False
+        if find_outer_boundary(chunk) is None:
+            return False
+        update_and_save(doc, reporter)
+        warnings.append(
+            "The plot boundary was derived from photo coverage ({} vertices) "
+            "{}. It follows the area actually photographed, so it will not "
+            "match the boundary of other timepoints exactly. Check it before "
+            "comparing timepoints.".format(vertices, reason))
+        return True
+
+    if has_boundary:
+        reporter.info(" --- Existing boundary polygon kept --- ")
+    elif source == BOUNDARY_NONE:
+        reporter.info(" --- Boundary creation is turned off for this run --- ")
+    elif source == BOUNDARY_PHOTOS:
+        has_boundary = try_photo_boundary("because photo coverage was chosen "
+                                          "as the boundary source")
+    else:
+        reporter.step("Creating boundary from markers")
         has_boundary = boundary_creation(chunk, reporter)
         if has_boundary:
-            reporter.info(" --- Boundary Polygon Created ---")
+            reporter.info(" --- Boundary Polygon Created --- ")
         else:
-            reporter.info(" --- Boundary polygon was NOT created; downstream "
-                          "steps that depend on it will be skipped ---")
+            warnings.append(
+                "Boundary polygon could not be created from the chunk's "
+                "georeferenced markers -- there were fewer than three, or "
+                "they enclose no area.")
+            # Only worth falling back when something downstream needs it.
+            if settings.export_taglab:
+                has_boundary = try_photo_boundary(
+                    "because the corner markers were not found")
 
     # ---------------- 3. Export ----------------
 
     # TagLab products are only useful clipped to the plot -- an uncropped one
     # carries the whole survey's overshoot and would have to be re-exported
-    # before it could be annotated.
-    #
-    # Corner markers are the preferred source: they mark the plot itself, so
-    # the boundary is the same every visit and timepoints stay comparable.
-    # Failing that, the union of the camera footprints describes the area
-    # actually surveyed, which is a good enough clip to annotate against and
-    # far better than skipping the export. It is derived from where the
-    # photographer swam, though, so it will differ between visits -- hence the
-    # warning rather than silent substitution.
+    # before it could be annotated. So no boundary means no TagLab export.
     export_taglab = settings.export_taglab
     if not has_boundary:
-        warnings.append(
-            "Boundary polygon could not be created from the chunk's "
-            "georeferenced markers -- there were fewer than three, or "
-            "they enclose no area.")
-
         if export_taglab:
-            reporter.step("Creating boundary from photo coverage")
-            try:
-                from modules import reefshape_boundary
-                vertices = reefshape_boundary.create_boundary_from_photos(
-                    chunk, reporter=reporter)
-                has_boundary = find_outer_boundary(chunk) is not None
-                if has_boundary:
-                    update_and_save(doc, reporter)
-                    warnings.append(
-                        "The plot boundary was derived from photo coverage "
-                        "({} vertices) rather than from corner markers, "
-                        "because the corner markers were not found. It "
-                        "follows the area actually photographed, so it will "
-                        "not match the boundary of other timepoints exactly. "
-                        "Check it before comparing timepoints."
-                        .format(vertices))
-            except Exception as exc:
-                # Never fatal: the orthomosaic, DEM and report are already
-                # built and are worth keeping.
-                reporter.warn(
-                    "Could not derive a boundary from photo coverage: "
-                    "{}".format(exc))
-
-        if not has_boundary:
-            warnings.append(
-                "The boundary shapefile export was skipped. To produce a "
-                "boundary, run script 06 (corner markers) or script 08 (from "
-                "camera footprints) and re-run this workflow.")
-            if export_taglab:
-                export_taglab = False
+            export_taglab = False
+            if source == BOUNDARY_NONE:
+                warnings.append(
+                    "TagLab outputs were skipped because boundary creation is "
+                    "turned off for this run, and TagLab products must be "
+                    "clipped to the plot boundary. Everything else was "
+                    "exported.")
+            else:
                 warnings.append(
                     "TagLab outputs were skipped: they must be clipped to the "
                     "plot boundary, and none could be created. Everything "
                     "else was exported.")
+        if source != BOUNDARY_NONE:
+            warnings.append(
+                "The boundary shapefile export was skipped. To produce a "
+                "boundary, use Create Boundary from Markers or Create "
+                "Boundary from Photos, then re-run this workflow.")
 
     jpg = Metashape.ImageCompression()
     jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG

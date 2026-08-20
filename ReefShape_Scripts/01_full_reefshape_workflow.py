@@ -185,6 +185,22 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.spinboxCustomRes.setDecimals(5)
         self.spinboxCustomRes.setValue(0.0005)
 
+        # boundary source
+        self.labelBoundary = QtWidgets.QLabel("Plot Boundary:")
+        self.comboBoundary = QtWidgets.QComboBox()
+        for name, _value in reefshape_core.BOUNDARY_SOURCES:
+            self.comboBoundary.addItem(name)
+        self.comboBoundary.setToolTip(
+            "Corner markers is the best option wherever permanent targets "
+            "exist: the boundary is tied to the plot, so it is identical "
+            "every visit and timepoints stay comparable.\n\n"
+            "Photo coverage follows where the photographer swam, so it "
+            "shifts between visits.\n\n"
+            "Choosing no boundary also disables TagLab outputs, which must "
+            "be clipped to the plot.")
+        self.labelBoundaryNote = QtWidgets.QLabel("")
+        self.labelBoundaryNote.setWordWrap(True)
+
         # set mesh quality
         self.labelMeshQuality = QtWidgets.QLabel("Mesh Quality")
         self.comboMeshQuality = QtWidgets.QComboBox()
@@ -285,8 +301,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # (the CRS is conceptually a georeferencing setting).
         self.general_groupbox = CollapsibleGroupBox("General")
         general_layout = QtWidgets.QVBoxLayout()
+        boundary_layout = QtWidgets.QHBoxLayout()
+        boundary_layout.addWidget(self.labelBoundary)
+        boundary_layout.addWidget(self.comboBoundary)
+        boundary_layout.addStretch()
+
         general_layout.addLayout(checkbox_layout)
         general_layout.addLayout(resolution_layout)
+        general_layout.addLayout(boundary_layout)
+        general_layout.addWidget(self.labelBoundaryNote)
         self.general_groupbox.setLayout(general_layout)
 
         # Export panel: output folder selector + the three export checkboxes.
@@ -398,6 +421,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # these two syntaxes for connecting signals to slots should be equivalent, but the first method (dot notation) may make it easier
         # to use widget-specific signals (such as currentIndexChanged) instead of core signals
         self.checkBoxDefaultRes.stateChanged.connect(self.onResolutionChange)
+        self.comboBoundary.currentIndexChanged.connect(self.onBoundaryChange)
         self.btnOutputDir.clicked.connect(self.getOutputDir)
         #self.btnCRS.clicked.connect(self.getCRS)
 
@@ -639,6 +663,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.checkBoxTagLab.setChecked(self.settings.value("checkBoxTagLab", False, type=bool))
         self.checkBoxReport.setChecked(self.settings.value("checkBoxExportReport", True, type=bool))
         self.checkBoxVertexColors.setChecked(self.settings.value("checkBoxVertexColors", False, type=bool))
+        self.comboBoundary.setCurrentIndex(self.settings.value("comboBoundary", 0, type=int))
+        self.onBoundaryChange()
         # We deliberately do NOT reapply the saved CRS to the chunk here.
         # The dropdown initial selection already honors the saved value as a
         # fallback (see __init__), and the chunk's CRS only changes when the
@@ -668,6 +694,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.settings.setValue("checkBoxTagLab", self.checkBoxTagLab.isChecked())
         self.settings.setValue("checkBoxExportReport", self.checkBoxReport.isChecked())
         self.settings.setValue("checkBoxVertexColors", self.checkBoxVertexColors.isChecked())
+        self.settings.setValue("comboBoundary", self.comboBoundary.currentIndex())
         # Guard against the "More…" sentinel — it isn't a real CRS option.
         # In normal use the dropdown reverts off the sentinel before this
         # runs, but this defends against any race.
@@ -796,6 +823,8 @@ class FullWorkflowDlg(QtWidgets.QDialog):
                 georef.spinboxXAcc.value(), georef.spinboxYAcc.value(),
                 georef.spinboxZAcc.value(), georef.spinboxSkipRows.value()],
 
+            boundary_source=reefshape_core.BOUNDARY_SOURCES[
+                self.comboBoundary.currentIndex()][1],
             output_dir=self.output_dir,
             export_report=self.checkBoxReport.isChecked(),
             export_gis=self.checkBoxExport.isChecked(),
@@ -827,6 +856,25 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         if(crs):
             Metashape.app.document.chunk.crs = crs
             self.txtCRS.setPlainText(crs.name)
+
+    def onBoundaryChange(self):
+        '''
+        Slot: spell out that turning the boundary off also turns off TagLab.
+        '''
+        source = reefshape_core.BOUNDARY_SOURCES[
+            self.comboBoundary.currentIndex()][1]
+        if source == reefshape_core.BOUNDARY_NONE:
+            self.labelBoundaryNote.setText(
+                "No boundary shapefile will be exported, and TagLab outputs "
+                "will be skipped -- they must be clipped to the plot boundary.")
+            self.labelBoundaryNote.setStyleSheet("color: #b8860b;")
+        elif source == reefshape_core.BOUNDARY_PHOTOS:
+            self.labelBoundaryNote.setText(
+                "The boundary will follow the area photographed, which shifts "
+                "between visits.")
+            self.labelBoundaryNote.setStyleSheet("color: gray;")
+        else:
+            self.labelBoundaryNote.setText("")
 
     def onResolutionChange(self):
         '''

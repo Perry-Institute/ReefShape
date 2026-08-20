@@ -458,6 +458,30 @@ class JobEditor(QtWidgets.QDialog):
         row.addStretch(1)
         layout.addLayout(row)
 
+        row = QtWidgets.QHBoxLayout()
+        boundary_label = QtWidgets.QLabel("Plot boundary:")
+        boundary_label.setMinimumWidth(130)
+        self.boundary_combo = QtWidgets.QComboBox()
+        for name, _value in models.BOUNDARY_SOURCES:
+            self.boundary_combo.addItem(name)
+        self.boundary_combo.setToolTip(
+            "Corner markers is the best option wherever permanent targets "
+            "exist: the boundary is tied to the plot, so it is identical "
+            "every visit and timepoints stay comparable.\n\n"
+            "Photo coverage follows where the photographer swam, so it "
+            "shifts between visits.\n\n"
+            "Choosing no boundary also disables TagLab outputs, which must "
+            "be clipped to the plot.")
+        self.boundary_combo.currentIndexChanged.connect(
+            lambda _i: self._on_boundary_changed())
+        row.addWidget(boundary_label)
+        row.addWidget(self.boundary_combo, 1)
+        layout.addLayout(row)
+
+        self.boundary_note = QtWidgets.QLabel("")
+        self.boundary_note.setWordWrap(True)
+        layout.addWidget(self.boundary_note)
+
         self.preselect_check = QtWidgets.QCheckBox("Generic preselection")
         self.preselect_check.setToolTip(
             "Speeds up alignment. Turn off for photo sets with severe caustics.")
@@ -526,6 +550,8 @@ class JobEditor(QtWidgets.QDialog):
                 job.processing.mesh_quality)
                 if job.processing.mesh_quality in
                 [n for n, _ in models.MESH_QUALITIES] else 2))
+        self.boundary_combo.setCurrentIndex(_boundary_index(
+            job.processing.boundary_source))
         self.preselect_check.setChecked(job.processing.generic_preselection)
         self.colors_check.setChecked(job.processing.vertex_colors)
         self.default_res_check.setChecked(job.processing.use_default_resolution)
@@ -621,6 +647,8 @@ class JobEditor(QtWidgets.QDialog):
             job.processing.crs_wkt = self.crs_picker.wkt()
             job.processing.crs_label = self.crs_picker.label()
         job.processing.mesh_quality = self.mesh_combo.currentText()
+        job.processing.boundary_source = models.BOUNDARY_SOURCES[
+            self.boundary_combo.currentIndex()][1]
         job.processing.generic_preselection = self.preselect_check.isChecked()
         job.processing.vertex_colors = self.colors_check.isChecked()
         job.processing.use_default_resolution = self.default_res_check.isChecked()
@@ -675,6 +703,23 @@ class JobEditor(QtWidgets.QDialog):
                 os.path.splitext(os.path.basename(path))[0])
         if self.job.kind == REPHOTO:
             self._probe()
+        self._revalidate()
+
+    def _on_boundary_changed(self):
+        """Spell out the consequence of turning the boundary off."""
+        source = models.BOUNDARY_SOURCES[
+            self.boundary_combo.currentIndex()][1]
+        if source == models.BOUNDARY_NONE:
+            self.boundary_note.setText(
+                "<span style='color:#b8860b;'>No boundary shapefile will be "
+                "exported, and TagLab outputs will be skipped -- they must be "
+                "clipped to the plot boundary.</span>")
+        elif source == models.BOUNDARY_PHOTOS:
+            self.boundary_note.setText(
+                "<span style='color:palette(mid);'>The boundary will follow "
+                "the area photographed, which shifts between visits.</span>")
+        else:
+            self.boundary_note.setText("")
         self._revalidate()
 
     def _on_photos_changed(self):
@@ -972,6 +1017,12 @@ class JobEditor(QtWidgets.QDialog):
     def accept(self):
         self._apply()
         super().accept()
+
+
+def _boundary_index(value):
+    """Index of a boundary source in BOUNDARY_SOURCES, defaulting to markers."""
+    return next((i for i, (_label, v) in enumerate(models.BOUNDARY_SOURCES)
+                 if v == value), 0)
 
 
 def _source_index(value):

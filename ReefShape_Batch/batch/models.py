@@ -51,6 +51,19 @@ DEFAULT_TARGET_TYPE = "CircularTarget12bit"
 # Mesh quality, mirroring FullWorkflowDlg.comboMeshQuality. The workflow
 # computes depth-map downscale as 2 ** combo_index, so the mapping below is
 # that same progression made explicit -- keep them in sync.
+# Where the plot boundary comes from. Mirrors reefshape_core.BOUNDARY_SOURCES;
+# the worker resolves the value. "none" additionally disables TagLab exports,
+# which have nothing to clip to without a boundary.
+BOUNDARY_MARKERS = "markers"
+BOUNDARY_PHOTOS = "photos"
+BOUNDARY_NONE = "none"
+
+BOUNDARY_SOURCES = [
+    ("Corner markers (convex hull)", BOUNDARY_MARKERS),
+    ("Photo coverage", BOUNDARY_PHOTOS),
+    ("Do not create a boundary", BOUNDARY_NONE),
+]
+
 MESH_QUALITIES = [
     ("Ultra High", 1),
     ("High", 2),
@@ -158,6 +171,7 @@ class ProcessingSettings:
     vertex_colors: bool = False
     use_default_resolution: bool = False
     ortho_resolution: float = 0.0005
+    boundary_source: str = BOUNDARY_MARKERS
 
     def effective_ortho_resolution(self) -> float:
         """0 tells Metashape to choose, matching the dialog's checkbox."""
@@ -570,10 +584,15 @@ def validate_job(job: Job) -> List[Issue]:
     if not (job.export.report or job.export.gis_outputs or job.export.taglab_outputs):
         warn("No outputs selected: the project will be processed but nothing "
              "will be exported.")
-    if (job.export.taglab_outputs and not job.georef.enabled
-            and job.kind == NEW_PLOT):
-        warn("TagLab outputs need a boundary polygon, which needs "
-             "georeferencing. They will be skipped for this job.")
+    if job.export.taglab_outputs:
+        if job.processing.boundary_source == BOUNDARY_NONE:
+            warn("TagLab outputs need a boundary polygon to clip to, and "
+                 "boundary creation is turned off. They will be skipped.")
+        elif (job.processing.boundary_source == BOUNDARY_MARKERS
+              and not job.georef.enabled and job.kind == NEW_PLOT):
+            warn("TagLab outputs need a boundary polygon. Without "
+                 "georeferencing there are no corner markers to build one "
+                 "from, so photo coverage will be used instead.")
 
     if job.processing.use_default_resolution is False and \
             job.processing.ortho_resolution <= 0:
