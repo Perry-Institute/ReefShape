@@ -46,8 +46,8 @@ if not exist "%SOURCE%" (
 for %%R in (
     "01_full_reefshape_workflow.py"
     "ui_components.py"
-    "modules\reefshape_core.py"
-    "modules\pip_auto_install.py"
+    "reefshape_modules\reefshape_core.py"
+    "reefshape_modules\pip_auto_install.py"
 ) do (
     if not exist "%SOURCE%\%%~R" (
         echo ERROR: The ReefShape_Scripts folder is missing %%~R
@@ -79,8 +79,16 @@ if exist "%TARGET%\__pycache__" (
         del /Q "%TARGET%\__pycache__\%%~nF.*.pyc" >nul 2>&1
     )
 )
-if exist "%TARGET%\modules" (
-    echo Removing stale modules folder
+if exist "%TARGET%\reefshape_modules" (
+    echo Removing stale reefshape_modules folder
+    rmdir /S /Q "%TARGET%\reefshape_modules"
+)
+REM The package used to be called "modules", which Metashape's own package
+REM shadows (see reefshape_modules\__init__.py). Older installs left that
+REM folder behind. "modules" is a common name, so it is only removed when it
+REM is recognisably ours: it holds reefshape_core.py.
+if exist "%TARGET%\modules\reefshape_core.py" (
+    echo Removing old modules folder from an earlier ReefShape version
     rmdir /S /Q "%TARGET%\modules"
 )
 

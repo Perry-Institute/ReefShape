@@ -18,7 +18,7 @@ version the other ReefShape scripts use -- an unpinned numpy silently bumps to
 
 import Metashape
 
-from modules.pip_auto_install import pip_install
+from reefshape_modules.pip_auto_install import pip_install
 
 pip_install("""numpy==1.26.4
 shapely>=2.0,<3

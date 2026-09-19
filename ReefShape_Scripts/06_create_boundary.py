@@ -20,7 +20,7 @@ view draws the polygon as it is built and says plainly when edges cross.
 import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 
-from modules.reefshape_core import (
+from reefshape_modules.reefshape_core import (
     corner_markers,
     create_shape_from_markers,
     find_outer_boundary,

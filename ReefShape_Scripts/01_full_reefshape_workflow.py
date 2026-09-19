@@ -21,8 +21,8 @@ import re
 from datetime import datetime
 from PySide2 import QtGui, QtCore, QtWidgets
 from ui_components import AddPhotosGroupBox, CollapsibleGroupBox, GeoreferenceGroupBox
-from modules import reefshape_core
-from modules.reefshape_core import WorkflowSettings, WorkflowError
+from reefshape_modules import reefshape_core
+from reefshape_modules.reefshape_core import WorkflowSettings, WorkflowError
 
 
 # Sentinel value used as a dropdown entry that, when selected, opens

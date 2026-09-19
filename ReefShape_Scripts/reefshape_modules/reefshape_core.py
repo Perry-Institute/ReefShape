@@ -1198,7 +1198,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         """Derive a boundary from camera coverage. True if one was created."""
         reporter.step("Creating boundary from photo coverage")
         try:
-            from modules import reefshape_boundary
+            from reefshape_modules import reefshape_boundary
             vertices = reefshape_boundary.create_boundary_from_photos(
                 chunk, reporter=reporter)
         except Exception as exc:

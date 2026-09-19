@@ -47,7 +47,8 @@ This installer must stay next to the ReefShape_Scripts folder. If you moved it
 out of the ReefShape folder, put it back and run it again."
 
 for required in "01_full_reefshape_workflow.py" "ui_components.py" \
-                "modules/reefshape_core.py" "modules/pip_auto_install.py"; do
+                "reefshape_modules/reefshape_core.py" \
+                "reefshape_modules/pip_auto_install.py"; do
     [ -f "$SOURCE/$required" ] || die "The ReefShape_Scripts folder is missing $required.
 
 It looks incomplete. Re-download ReefShape and try again."
@@ -68,8 +69,16 @@ if [ -d "$TARGET/__pycache__" ]; then
         rm -f "$TARGET/__pycache__/$base."*.pyc 2>/dev/null
     done
 fi
-if [ -d "$TARGET/modules" ]; then
-    echo "Removing stale modules folder"
+if [ -d "$TARGET/reefshape_modules" ]; then
+    echo "Removing stale reefshape_modules folder"
+    rm -rf "$TARGET/reefshape_modules"
+fi
+# The package used to be called "modules", which Metashape's own package
+# shadows (see reefshape_modules/__init__.py). Older installs left that folder
+# behind. "modules" is a common name, so it is only removed when it is
+# recognisably ours: it holds reefshape_core.py.
+if [ -f "$TARGET/modules/reefshape_core.py" ]; then
+    echo "Removing old modules folder from an earlier ReefShape version"
     rm -rf "$TARGET/modules"
 fi
 

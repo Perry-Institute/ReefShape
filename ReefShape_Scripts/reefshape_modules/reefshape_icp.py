@@ -61,7 +61,7 @@ def ensure_dependencies():
         return
 
     if not dependencies_available():
-        from modules.pip_auto_install import pip_install
+        from reefshape_modules.pip_auto_install import pip_install
         pip_install(REQUIREMENTS)
 
     import numpy as _np
