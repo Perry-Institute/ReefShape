@@ -1,20 +1,23 @@
 """
 Build a batch from a folder of plots in one go.
 
-Point at a season's parent directory and get one new-plot job per photo
-subfolder. This is the difference between setting up twenty plots and setting
-up one twenty times, which is the whole reason the batch app exists.
+Point at a season's parent directory and get one new-plot job per photo folder
+found under each plot folder. This is the difference between setting up twenty
+plots and setting up one twenty times, which is the whole reason the batch app
+exists.
 
-Two layouts are recognised, because both are common in the field:
+Photos may sit at any depth below a plot folder (see MAX_DEPTH). Common shapes:
 
-    Season/                     Season/
-      SiteA/  *.JPG               SiteA/
-      SiteB/  *.JPG                 20260522/  *.JPG
-                                  SiteB/
-                                    20260523/  *.JPG
+    Season/              Season/                Season/
+      SiteA/  *.JPG        SiteA/                 SiteA/
+      SiteB/  *.JPG          20260522/  *.JPG       20260522/
+                           SiteB/                     JPEG/  *.JPG
+                             20260523/  *.JPG         RAW/   *.ARW
 
-The first names the chunk from EXIF; the second takes the subfolder's name as
-the chunk, since a dated folder is already the answer.
+Each plot folder is one plot, and the project sits with it. A folder named
+YYYYMMDD anywhere between the plot and its photos names the chunk, since a
+dated folder is already the answer; otherwise EXIF decides. RAW folders are
+passed over naturally: only .jpg and .tif files count as photos.
 """
 
 from __future__ import annotations
@@ -33,51 +36,76 @@ DATE_FOLDER = re.compile(r"^\d{8}$")
 # pointed at a previous run's exports.
 IGNORED = {"taglab_outputs", "exports", "outputs", "reports"}
 
+# How many folders deep to look for photos, counting the plot folder as one.
+# The usual layout is Plot/YYYYMMDD/JPEG (three); the rest is headroom. The cap
+# also keeps a symlink loop finite.
+MAX_DEPTH = 6
+
+
+def _subfolders(folder):
+    """Subfolders of `folder` that could hold photos, in name order."""
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: e.name)
+    except OSError:
+        return []
+    return [e for e in entries
+            if e.is_dir()
+            and not e.name.startswith(".")
+            and e.name.lower() not in IGNORED
+            # Metashape's own project data; never source photos, and large
+            # enough to be worth not walking now that the scan goes deep.
+            and not e.name.lower().endswith(".files")]
+
+
+def _find_photo_folders(folder, trail, depth):
+    """Yield (path, trail, image_count) for each photo folder at or below `folder`.
+
+    `trail` is the folder names from the plot folder down to `folder`. A folder
+    holding images is a photo folder and the search stops there: the workflow
+    reads only the top level of one, so anything nested inside it is not a
+    separate set of photos. Folders without images are searched further.
+    """
+    count = models.count_images(folder)
+    if count:
+        yield folder, trail, count
+    elif depth < MAX_DEPTH:
+        for child in _subfolders(folder):
+            yield from _find_photo_folders(
+                child.path, trail + [child.name], depth + 1)
+
+
+def _chunk_name(trail):
+    """The nearest YYYYMMDD folder name in `trail`, or "" to let EXIF decide."""
+    for name in reversed(trail):
+        if DATE_FOLDER.match(name):
+            return name
+    return ""
+
 
 def find_plots(root):
     """Discover plots under `root`.
 
-    Returns a list of dicts: name, photo_folder, chunk_name, image_count.
-    Only the two layouts above are considered -- guessing more deeply risks
-    sweeping in an export folder and creating a job that processes an
-    orthomosaic back into a project.
+    Returns a list of dicts: name, photo_folder, chunk_name, image_count,
+    project_folder. A plot folder with several photo folders (one per survey)
+    yields one entry for each.
+
+    Only folders holding photo files are picked up, and IGNORED folders are
+    skipped at every depth, so a previous run's exports are not swept in and
+    turned into a job that processes an orthomosaic back into a project.
     """
     plots = []
-    try:
-        entries = sorted(os.scandir(root), key=lambda e: e.name)
-    except OSError:
-        return plots
-
-    for entry in entries:
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
-        if entry.name.lower() in IGNORED:
-            continue
-
-        direct = models.count_images(entry.path)
-        if direct:
-            plots.append({"name": entry.name, "photo_folder": entry.path,
-                          "chunk_name": "", "image_count": direct})
-            continue
-
-        # No images directly inside: look one level down for dated folders.
-        try:
-            children = sorted(os.scandir(entry.path), key=lambda e: e.name)
-        except OSError:
-            continue
-        for child in children:
-            if not child.is_dir() or child.name.lower() in IGNORED:
-                continue
-            count = models.count_images(child.path)
-            if not count:
-                continue
+    for entry in _subfolders(root):
+        for path, trail, count in _find_photo_folders(entry.path, [], 1):
             plots.append({
                 "name": entry.name,
-                "photo_folder": child.path,
-                # A folder already named YYYYMMDD is the chunk name; anything
-                # else is left blank so EXIF decides.
-                "chunk_name": child.name if DATE_FOLDER.match(child.name) else "",
+                "photo_folder": path,
+                "chunk_name": _chunk_name(trail),
                 "image_count": count,
+                # Photos straight in the plot folder put the project beside it;
+                # anything nested puts it in the plot folder, so it sits with
+                # the plot rather than inside one visit.
+                "project_folder": (entry.path if trail
+                                   else os.path.dirname(entry.path)),
             })
     return plots
 
@@ -92,9 +120,11 @@ class ScanFolderDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
 
         intro = QtWidgets.QLabel(
-            "Choose a folder containing one subfolder per plot. Each plot "
-            "gets a new-plot job, with settings taken from the template below. "
-            "You can edit any of them afterwards.")
+            "Choose a folder containing one subfolder per plot. Photos can be "
+            "directly in a plot folder or in folders nested below it (for "
+            "example a dated survey folder holding a JPEG folder). Each photo "
+            "folder gets a new-plot job, with settings taken from the "
+            "template below. You can edit any of them afterwards.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -137,9 +167,10 @@ class ScanFolderDialog(QtWidgets.QDialog):
         row.addWidget(self.dest_edit, 1)
         layout.addLayout(row)
 
-        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table = QtWidgets.QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["", "Plot", "Photos", "Chunk", "Project will be created at"])
+            ["", "Plot", "Photos", "Chunk", "Photo folder",
+             "Project will be created at"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         header = self.table.horizontalHeader()
@@ -147,7 +178,8 @@ class ScanFolderDialog(QtWidgets.QDialog):
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
 
         self.summary = QtWidgets.QLabel("")
@@ -196,19 +228,24 @@ class ScanFolderDialog(QtWidgets.QDialog):
                 str(plot["image_count"])))
             self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(
                 plot["chunk_name"] or "(from photos)"))
+            folder = QtWidgets.QTableWidgetItem(
+                os.path.relpath(plot["photo_folder"], root))
+            folder.setToolTip(plot["photo_folder"])
+            self.table.setItem(row, 4, folder)
             path = self._project_path(plot)
             item = QtWidgets.QTableWidgetItem(path)
             item.setToolTip(path)
             if os.path.exists(path):
                 item.setText(path + "   (already exists -- will be continued)")
-            self.table.setItem(row, 4, item)
+            self.table.setItem(row, 5, item)
 
         if not root:
             self.summary.setText("")
         elif not self.plots:
             self.summary.setText(
-                "No photo folders found. Expected subfolders containing .jpg "
-                "or .tif images, either directly or one level down.")
+                "No photo folders found. Expected .jpg or .tif images in "
+                "folders up to {} levels below the chosen folder."
+                .format(MAX_DEPTH))
         else:
             total = sum(p["image_count"] for p in self.plots)
             self.summary.setText(
@@ -219,9 +256,7 @@ class ScanFolderDialog(QtWidgets.QDialog):
         if self.dest_combo.currentIndex() == 1 and self.dest_edit.text():
             folder = self.dest_edit.text()
         else:
-            # Beside the photos, one level up from a dated subfolder so the
-            # project sits with the plot rather than inside one visit.
-            folder = os.path.dirname(plot["photo_folder"])
+            folder = plot["project_folder"]
         return os.path.join(folder, plot["name"] + ".psx")
 
     def _checked(self):

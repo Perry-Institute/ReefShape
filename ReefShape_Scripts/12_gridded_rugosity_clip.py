@@ -40,7 +40,7 @@ import time
 import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 
-from modules.pip_auto_install import pip_install
+from reefshape_modules.pip_auto_install import pip_install
 
 pip_install("""numpy==1.26.4
 rasterio>=1.4,<2

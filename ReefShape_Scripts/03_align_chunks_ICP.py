@@ -35,7 +35,7 @@ import os, sys, copy, time, itertools, tempfile
 from pathlib import Path
 
 import urllib.request, tempfile
-from modules.pip_auto_install import pip_install, user_packages_location, _is_already_installed
+from reefshape_modules.pip_auto_install import pip_install, user_packages_location, _is_already_installed
 
 # Metashape version check. The ICP utilities here were developed against 2.0+;
 # we warn rather than raise on other versions so the script still loads (most

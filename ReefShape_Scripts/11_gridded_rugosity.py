@@ -45,7 +45,7 @@ import tempfile
 import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
 
-from modules.pip_auto_install import pip_install
+from reefshape_modules.pip_auto_install import pip_install
 
 # Deliberately NO matplotlib. An earlier version used matplotlib.path.Path
 # for point-in-polygon, but on some installs `from matplotlib.path import

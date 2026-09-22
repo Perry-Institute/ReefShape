@@ -40,10 +40,10 @@ Algorithm:
 
 import Metashape
 from PySide2 import QtCore, QtGui, QtWidgets
-from modules.pip_auto_install import pip_install
+from reefshape_modules.pip_auto_install import pip_install
 
 # Auto-install deps. numpy is pinned to the same version the other
-# ReefShape scripts use (1.26.4) — see modules/pip_auto_install.py for
+# ReefShape scripts use (1.26.4) — see reefshape_modules/pip_auto_install.py for
 # why an unpinned numpy would silently bump to 2.x and break scipy/open3d
 # wheels. shapely is the only geometry library we need here: the coverage
 # polygon is computed as a vector buffered-union of the camera positions,
@@ -57,11 +57,11 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 
-# The computation lives in modules/reefshape_boundary.py so that
+# The computation lives in reefshape_modules/reefshape_boundary.py so that
 # reefshape_core can use it too -- the batch runner falls back to a
 # photo boundary when a plot has no corner markers but its TagLab
 # exports need one. This script is the interactive front end for it.
-from modules.reefshape_boundary import (
+from reefshape_modules.reefshape_boundary import (
     BoundaryError,
     DEFAULT_FOOTPRINT_M,
     create_boundary_from_photos,

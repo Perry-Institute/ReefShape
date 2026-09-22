@@ -28,7 +28,7 @@ import os
 
 import Metashape
 
-from modules.reefshape_core import Reporter, WorkflowError
+from reefshape_modules.reefshape_core import Reporter, WorkflowError
 
 
 # Marker reference accuracy, in metres.
