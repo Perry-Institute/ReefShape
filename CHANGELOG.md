@@ -10,6 +10,8 @@
 ✅ **New tools**: Export Compressed DEM, Build Scalebar File.
 ✅ **Default resolution** builds the orthomosaic from the mesh and then the DEM at its own default; a custom resolution stores the DEM at four times the orthomosaic's cell size, and the full-resolution DEM is now actually deleted.
 
+✅ **Scalebar targets that moved during the survey no longer bend the scale**: projections with a pixel error over 10 px are removed from scalebar targets before the mesh is built (with a check that each bar keeps at least three good photos per end and three showing both ends), with a fallback that loosens the accuracy of a bar that cannot be trusted instead of removing it.
+
 ### 🐛 Bug fixes (production-readiness pass)
 ✅ **Create New in Project Setup could overwrite the project with an empty chunk**: the dialog kept working on a scratch document after Create New. It now follows the document Metashape has open, and uses the new project's name for output files.
 ✅ **Interrupted exports could be mistaken for finished ones**: exports were skipped on re-run whenever the file existed, including a truncated one from a killed run. They are now written under a temporary name and renamed on success.

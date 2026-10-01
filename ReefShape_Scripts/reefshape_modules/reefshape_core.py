@@ -66,6 +66,25 @@ DEM_RESAMPLE_FACTOR = 4
 # coarser than that.
 DEFAULT_MODE_UNSHRUNK_FACTOR = 2.0
 
+# Scalebar targets sometimes shift slightly during a dive. A shifted target's
+# photos disagree about where it is, which bends the scale. Projections whose
+# pixel error is above this are treated as photos taken after (or before) the
+# target moved. 10 px is about 5 mm at 0.5 mm per pixel, far above the 1-3 px
+# of a target that stayed put.
+SCALEBAR_MAX_PROJECTION_ERROR_PX = 10.0
+# A bar is only trusted if each end still has this many good photos, and this
+# many photos show both ends at once (so both were measured at the same
+# moment). Fewer than this and one stray photo could be setting the scale.
+SCALEBAR_MIN_GOOD_PROJECTIONS = 3
+# A bar that cannot be trusted keeps its place but is given this accuracy
+# (metres), so the solver leans on the bars that can be. Roughly 1/1000 of the
+# weight of a normal 0.25 mm bar, without ever removing the bar outright: if
+# every bar were removed there would be no scale at all.
+SCALEBAR_UNTRUSTED_ACCURACY_M = 0.01
+# A trusted bar whose measured length still differs from its nominal length by
+# more than this fraction is reported, whatever the pixel errors say.
+SCALEBAR_LENGTH_WARN_FRACTION = 0.005
+
 # Where the plot boundary comes from.
 #
 # Markers is the default and the best option wherever corner targets exist:
@@ -391,6 +410,197 @@ def create_scalebars(chunk, path):
         print("Scalebar markers not found in this chunk (skipped): {}".format(
             ", ".join(sorted(set(missing)))))
     return None
+
+
+def _projection_errors(marker):
+    """[(pixel_error, camera), ...] for a marker's projections, worst first.
+
+    The error is how far the marker's current estimated position lands from
+    where it was detected in each photo. Metashape re-estimates the position
+    whenever a projection is added or removed, so these change as a marker is
+    trimmed.
+    """
+    errors = []
+    position = marker.position
+    if position is None:
+        return errors
+    for camera, projection in marker.projections.items():
+        if camera.transform is None or not projection.valid:
+            continue
+        projected = camera.project(position)
+        if projected is None:
+            continue
+        error = ((projected.x - projection.coord.x) ** 2
+                 + (projected.y - projection.coord.y) ** 2) ** 0.5
+        errors.append((error, camera))
+    errors.sort(key=lambda item: item[0], reverse=True)
+    return errors
+
+
+def _usable_cameras(marker):
+    """Cameras that still hold a valid projection of `marker`."""
+    return {camera for camera, projection in marker.projections.items()
+            if camera.transform is not None and projection.valid}
+
+
+def clean_scalebar_projections(chunk, reporter=None,
+                               max_error_px=SCALEBAR_MAX_PROJECTION_ERROR_PX,
+                               min_good=SCALEBAR_MIN_GOOD_PROJECTIONS):
+    """Stop scalebar targets that moved during the survey from bending the scale.
+
+    A target nudged part-way through a dive is seen in two places. Metashape
+    averages them, the marker lands somewhere neither photo set agrees with,
+    and any scalebar it belongs to is measured wrong. This removes the
+    projections that disagree with the rest, so the marker is located from the
+    photos where it stayed put.
+
+    For each marker that belongs to a scalebar, the projection with the largest
+    pixel error is removed while it is above `max_error_px`, re-checking after
+    each removal because the estimated position moves toward the majority. A
+    marker is never trimmed below `min_good` projections.
+
+    A bar is then only trusted if each end keeps at least `min_good` photos and
+    at least `min_good` photos show both ends (they were measured at the same
+    moment). A bar that fails is not removed: its markers get their projections
+    back and the bar's accuracy is loosened to SCALEBAR_UNTRUSTED_ACCURACY_M,
+    so the scale is driven by the bars that can be trusted. If no bar can be
+    trusted nothing is changed except a warning, because there is no better
+    scale to lean on. Markers on trusted bars keep their trimmed projections.
+
+    Bars and markers that were fine are left exactly as they were. Returns a
+    dict of what happened (also reported), for callers and tests.
+    """
+    report = reporter.info if reporter is not None else print
+    warn = reporter.warn if reporter is not None else print
+    summary = {"removed": 0, "untrusted": [], "trimmed_markers": [], "bars": 0}
+
+    bars = [sb for sb in chunk.scalebars if sb.point0 is not None and sb.point1 is not None]
+    summary["bars"] = len(bars)
+    if not bars:
+        return summary
+
+    markers = {}
+    for bar in bars:
+        for marker in (bar.point0, bar.point1):
+            markers[marker.key] = marker
+
+    # What each marker held, so a marker can be put back exactly as it was.
+    original = {}
+    for key, marker in markers.items():
+        original[key] = [(camera, projection.coord, projection.pinned)
+                         for camera, projection in marker.projections.items()]
+
+    trimmed = {}                  # marker key -> number of projections removed
+    stuck = set()                 # markers still above the limit after trimming
+    for key, marker in markers.items():
+        if marker.position is None:
+            continue
+        removed = 0
+        while True:
+            errors = _projection_errors(marker)
+            if not errors or errors[0][0] <= max_error_px:
+                break
+            if len(errors) <= min_good:
+                stuck.add(key)    # cannot trim further, and still too noisy
+                break
+            marker.projections[errors[0][1]] = None
+            removed += 1
+        if removed:
+            trimmed[key] = removed
+
+    def bar_untrusted(bar):
+        ends = (bar.point0, bar.point1)
+        touched = any(m.key in trimmed or m.key in stuck for m in ends)
+        if not touched:
+            return None           # untouched: leave it alone
+        cameras = [_usable_cameras(m) for m in ends]
+        if len(cameras[0]) < min_good or len(cameras[1]) < min_good:
+            return ("fewer than {} good photos of one end".format(min_good))
+        if len(cameras[0] & cameras[1]) < min_good:
+            return ("fewer than {} photos show both ends together".format(min_good))
+        if any(m.key in stuck for m in ends):
+            return "a target is still inconsistent between photos"
+        return None
+
+    untrusted = {}
+    for bar in bars:
+        reason = bar_untrusted(bar)
+        if reason:
+            untrusted[bar.key] = (bar, reason)
+
+    trusted_bars = [b for b in bars if b.key not in untrusted]
+
+    if untrusted and not trusted_bars:
+        # Nothing better to lean on. Putting everything back and loosening
+        # every bar equally would change nothing, so leave the bars alone and
+        # say so: the scale rests on bars with a target that moved.
+        for key, marker in markers.items():
+            _restore_projections(marker, original[key])
+        warn("Every scalebar has a target that appears to have moved during "
+             "the survey, and none could be cleaned reliably ({}). The model "
+             "is scaled from them anyway; check the scale before using "
+             "measurements.".format(
+                 "; ".join("{}: {}".format(b.label, r) for b, r in untrusted.values())))
+        summary["untrusted"] = [b.label for b, _r in untrusted.values()]
+        return summary
+
+    # Markers on an untrusted bar get their original projections back, unless
+    # they also sit on a trusted bar, where the trimmed set is what keeps that
+    # bar right.
+    on_trusted = {m.key for b in trusted_bars for m in (b.point0, b.point1)}
+    for bar, _reason in untrusted.values():
+        for marker in (bar.point0, bar.point1):
+            if marker.key in on_trusted:
+                continue
+            _restore_projections(marker, original[marker.key])
+            trimmed.pop(marker.key, None)
+
+    for bar, reason in untrusted.values():
+        bar.reference.accuracy = max(bar.reference.accuracy,
+                                     SCALEBAR_UNTRUSTED_ACCURACY_M)
+        warn("Scalebar {} was given a looser accuracy ({:.0f} mm) because it "
+             "cannot be trusted: {}. The scale follows the other bars "
+             "instead.".format(bar.label, SCALEBAR_UNTRUSTED_ACCURACY_M * 1000,
+                               reason))
+        summary["untrusted"].append(bar.label)
+
+    for key, count in trimmed.items():
+        marker = markers[key]
+        report("  {}: removed {} photo(s) where it appears to have moved "
+               "(pixel error over {:g}); {} remain".format(
+                   marker.label, count, max_error_px,
+                   len(_usable_cameras(marker))))
+        summary["removed"] += count
+        summary["trimmed_markers"].append(marker.label)
+
+    if trimmed or untrusted:
+        chunk.updateTransform()
+
+    # A last look at the result in physical terms. Pixel errors say a target
+    # is consistent with itself, not that the bar came out the right length.
+    scale = chunk.transform.scale if chunk.transform else None
+    if scale:
+        for bar in trusted_bars:
+            nominal = bar.reference.distance
+            if (not nominal or bar.point0.position is None
+                    or bar.point1.position is None):
+                continue
+            measured = (bar.point0.position - bar.point1.position).norm() * scale
+            if abs(measured - nominal) / nominal > SCALEBAR_LENGTH_WARN_FRACTION:
+                warn("Scalebar {} measures {:.1f} mm but should be {:.1f} mm "
+                     "({:+.1%}). Check that its targets did not move.".format(
+                         bar.label, measured * 1000, nominal * 1000,
+                         (measured - nominal) / nominal))
+    return summary
+
+
+def _restore_projections(marker, snapshot):
+    """Put back exactly the projections a marker had in `snapshot`."""
+    current = _usable_cameras(marker)
+    for camera, coord, pinned in snapshot:
+        if camera not in current:
+            marker.projections[camera] = Metashape.Marker.Projection(
+                Metashape.Vector([coord.x, coord.y]), pinned)
 
 
 def _find_marker(chunk, label):
@@ -1454,6 +1664,21 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
             suppressed = []
 
     # ---------------- 2. Generate products ----------------
+
+    # Before the mesh, while the scale can still change freely. A scalebar
+    # target that shifted during the dive would otherwise bend the scale; see
+    # clean_scalebar_projections. Skipped once a mesh exists (a resumed run, or
+    # a chunk the user processed by hand).
+    if chunk.model is None and len(chunk.scalebars) > 0:
+        try:
+            summary = clean_scalebar_projections(chunk, reporter)
+        except Exception as exc:
+            # Housekeeping: never worth stopping a run for.
+            reporter.warn("Could not check the scalebar targets for movement "
+                          "({}); continuing with the scale as it is.".format(exc))
+        else:
+            if summary["removed"] or summary["untrusted"]:
+                update_and_save(doc, reporter)
 
     if chunk.model is None:
         # Reset the region so the mesh covers the whole plot rather than

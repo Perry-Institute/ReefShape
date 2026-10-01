@@ -1,168 +1,284 @@
-# Reefshape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring
+# ReefShape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring
 
-<p align="center"> 
-  <img src="https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1" alt="ReefShape Logo" width="400"/> 
+<p align="center">
+  <img src="https://www.dropbox.com/scl/fi/6r2nx382dr8nzp1sjswb6/Reefshape.png?rlkey=nwfnmovaa2g2rihrmiko9jkan&raw=1" alt="ReefShape Logo" width="400"/>
 </p>
 
-<b>NEW (JUNE 2026): ✨ReefShape v1.3 is out!✨ This release adds compatibility with Agisoft Metashape 2.3, which renamed and removed a few arguments in its Python API. ReefShape now works on Metashape 2.0 through 2.3 from a single codebase. [See the full changelog here.](CHANGELOG.md)</b>
+ReefShape is a method for collecting and processing underwater photogrammetry (Large-Area Imaging) data, developed for coral reef monitoring at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a> by Will Greene and Sam Marshall. Detectable corner markers and scalebars are placed on a plot when it is photographed; this repository holds the software that turns those photos into scaled, georeferenced, time-series-aligned data products in <b>Agisoft Metashape Professional</b>, with almost no manual work:
 
-<b>JUNE 2025: Introducing ReefShape v1.2! Includes a number of improvements to functionality, bug fixes, and installer files for Windows and Mac.</b> 
+* **A set of Metashape scripts** (a **ReefShape** menu) that runs the whole pipeline from one dialog: align, scale, georeference, mesh, orthomosaic, DEM, boundary and exports, plus tools for time-series alignment, rugosity and housekeeping.
+* **ReefShape Batch**, a separate program that queues many plots and processes them unattended, several at a time.
+* **Field resources**: a data collection cheat sheet and example scalebar and georeferencing files.
 
-ReefShape is a methodology for underwater photogrammetry or Large-Area Imaging developed specifically for coral reef monitoring. This GitHub repository acts as a landing page for ReefShape, and includes instructional materials on the methodology, sample files, and processing scripts. The key feature or ReefShape is <b>robust, automated photogrammetry data processing</b> using our custom pipeline that's driven by python scripts for the efficient processing of georeferenced, time-series coral reef photomosaics using Agisoft Metashape Professional. ReefShape was created by Will Greene and Sam Marshall at the <a href="https://www.perryinstitute.org/">Perry Institute for Marine Science</a>. 
+> **What's new.** ReefShape v1.3 added Metashape 2.3 support. Since then: the **ReefShape Batch** processor, a shared processing core, boundaries from the convex hull of the corner markers, TagLab project files and a **legacy TagLab export**, smarter DEM/orthomosaic resolution handling, protection against **scalebar targets that move during a dive**, resumable exports, and a broad reliability pass over every dialog and script. See the [full changelog](CHANGELOG.md).
 
-### ReefShape Publication
-The ReefShape method has been peer-reviewed and is published open-access in the Journal of Visualized Experiments. Check out the publication <a href="https://dx.doi.org/10.3791/67343">here</a>. The article includes a comprehensive protocol section with all instructions needed to make use of ReefShape. Alongside it is a 14 minute video explaining the protocol. Reading the JoVE article is the best place to start to understand what ReefShape is and how to use it.
+**Contents**
+[Publication and video](#publication-and-video) ·
+[Quick start](#quick-start) ·
+[Installation](#installation) ·
+[Processing one plot](#processing-one-plot) ·
+[Repeat visits (time series)](#repeat-visits-time-series) ·
+[ReefShape Batch](#reefshape-batch) ·
+[Processing choices](#processing-choices-worth-knowing) ·
+[Menu reference](#menu-reference) ·
+[Input files](#input-files) ·
+[Field method](#field-method) ·
+[Troubleshooting](#troubleshooting) ·
+[Citation](#citation)
 
-Additionally, we have put together a white paper designed to more fully explain the entire process, from data collection through data analysis. Please find the <a href="https://docs.google.com/document/d/e/2PACX-1vQRazKwhYxGvmL2b0kGN1Nq9on1qL7MEkPXuC5SPvZqiAmmCvN_ShBfYB7Rc4fBbpEiHhQ5WzZkLUA5/pub">ReefShape white paper</a> here. 
+---
 
-### ReefShape Webinar
+## Publication and video
+
+The ReefShape method is peer-reviewed and published open-access in the Journal of Visualized Experiments (<a href="https://dx.doi.org/10.3791/67343">article</a>). It includes a full protocol and a 14-minute video, and is the best place to start. A longer <a href="https://docs.google.com/document/d/e/2PACX-1vQRazKwhYxGvmL2b0kGN1Nq9on1qL7MEkPXuC5SPvZqiAmmCvN_ShBfYB7Rc4fBbpEiHhQ5WzZkLUA5/pub">white paper</a> covers the whole process from data collection to analysis.
+
 [![Webinar Thumbnail](https://www.dropbox.com/scl/fi/fqazzf3t70hdx24sebdec/ReefShape-Webinar-Thumbnail.jpg?rlkey=1fx81abbdsc11mocxg7bu7438&raw=1)](http://www.youtube.com/watch?v=N4yzl1FFQcE "ReefShape Webinar")
 
-## Intro
-At its core, ReefShape is a method for the setup and collection of underwater photogrammetry data that when done properly, allows for full automation of the processing and time-series alignment pipelines when using our custom scripts. Looking to get started using the method? You're in the right place - all the information you need for equipment setup, data collection, and processing is embedded or linked from this page. Our collection of python scripts are designed to <b>dramatically expedite processing</b> of underwater photogrammetry data in Agisoft Metashape Professional v2.0 and above. Specifically, they allow for the automation of the entire photogrammetry process, provided that coded Metashape targets are used for corner markers and scalebars, and that GPS locations and depths of the corner markers are collected when a plot is first established, as is outlined in the ReefShape data collection protocol. 
+## Why ReefShape
 
-The scripts facilitate automatic time-series alignment of plots where permanent corner markers are installed. Automatic data export is also included for analysis in standard GIS software or <a href="https://github.com/cnr-isti-vclab/TagLab">TagLab</a>. A publication describing the ReefShape method will be made available in the near future. The remainder of this readme file gives an overview of the scripts and their use, as well as information on our corner marker system and using the ReefShape GPS data collection survey. 
+Most underwater photogrammetry protocols collect imagery in a similar way and give similar results. ReefShape differs in two small field tweaks that make the processing fully automatic:
+
+1. **A simple referencing system.** Auto-detectable corner markers and scalebars, plus a GPS point and depth for each corner (collected with the free Survey123 form), give Metashape everything it needs to scale, orient and locate a model in real-world coordinates. No bubble levels, compass bearings, or manual control points.
+2. **Permanent corner markers** let later visits be aligned to the first one automatically, so a repeat visit needs only marker cleaning and photography.
+
+On top of that the scripts provide **one-dialog processing** (about a minute of setup, then hours of unattended work on an ordinary GPU workstation), **analysis-ready exports** for GIS software and <a href="https://github.com/cnr-isti-vclab/TagLab">TagLab</a>, and everything runs **on your own computer**: no uploads, no pay-per-use processing, and every step stays available for you to inspect and correct.
 
 <img src="https://www.dropbox.com/scl/fi/uu7oh76lzm5itfyoe3nmc/SI-4_GeoRef_Example.png?rlkey=iqyvft4j68p8d85zegtk17t0m&raw=1" alt="Metashape Screenshot" width="1000"/>
-<i> Screenshot of a reef plot processed with ReefShape. The reference panel at the left shows the inclusion of real-world georeferencing, depth, and scaling information. </i> <br>
-<br>
+<i>A reef plot processed with ReefShape. The reference panel at the left shows the real-world georeferencing, depth and scale information.</i>
 
-### Why use ReefShape?
-There are a lot of great underwater photogrammetry protocols out there, and if you look at them with a careful eye, you will realize there are far more similarities between methods than there are differences. Most recommend collecting imagery in a similar way, and yield similar results. ReefShape differs from other published protocols by making a few tweaks to plot setup and metadata collection in the field that allow the automation of the photogrammetry processing component through our custom scripts that enhance efficiency, data quality, ease of use, and general workflow optimization. Here are the key things that ReefShape does:
+## Quick start
 
-First, we make use of a <b>simple referencing system</b> that provides the photogrammetry software (Agisoft Metashape) with all the information it needs to properly scale, orient, and locate the models with real world coordinates. Detectable corner markers and scale bars coupled with our free Survey123 form facilitates the easy collection and integration of this data - no more bubble levels or compass bearings underwater, manually placing control points, setting scale and orienting the model on the computer, or external storage of GPS coordinates to relocate the plot. Second, our <b> automated processing scripts </b> make photogrammetry processing simple, repeatable, and quick: you input all the data needed for processing in a graphic interface (takes about 1 minute), then click OK to run the entire process start to finish, resulting in finished and exported data products. Importantly, all this happens on your local computer, giving you full control of your data and the ability to adjust and fix any errors. No more long upload times or black-box, pay-per-use processing! The automated process is optimized to be as efficient as possible, meaning that you can run it in a matter of hours on most reasonably powerful consumer computers with a dedicated graphics processor. Third, our use of permanent corner markers facilitates <b>automatic time-series alignment</b> of datasets, improving accuracy and saving lots of time. Finally, our scripts create <b>analysis-ready data exports</b> for you that are ready to go and properly formatted for general GIS software (QGIS, ArcGIS Pro, etc) and <a href="https://github.com/cnr-isti-vclab/TagLab">TagLab</a> for rapid coral colony segmentation and time-series change analysis. Overall, our goal with ReefShape is to make underwater photogrammetry faster and easier, letting researchers focus on what actually matters, which is collecting relevant ecological data from the imagery products, rather than spending time and effort on the photogrammetry processing itself. 
+1. **Install** Metashape Professional 2.0 or newer, then run `Install ReefShape (PC).bat` or `Install ReefShape (Mac).command` ([details](#installation)). Restart Metashape.
+2. **Prepare two small files**: a [scalebar list](#scalebar-file) (once per survey, or build it with *Tools > Build Scalebar File*) and a [georeferencing file](#georeferencing-file) for the plot.
+3. **One plot:** open Metashape, choose **ReefShape > Full ReefShape Workflow**, add your photos, point it at the two files, and click **Ok**.
+   **Many plots:** open **ReefShape Batch**, use *Scan folder* to build a queue, and click **Run batch**.
+4. **Repeat visit:** use **ReefShape > Align Timepoints** (or the batch's re-photography job) so the new visit lines up with the first, then run the full workflow on it.
 
-### Corner Markers
-The ReefShape workflow relies on auto-detectable corner markers being either permenently installed (for time-series monitoring of a plot) or temporarily placed. We have developed two kinds of custom markers for this purpose: simple flexible molded PVC pucks, and experimental anti-fouling markers that resist algal growth. Both types can be nailed, epoxied, or cemented to the substrate for installation. For more information on these corner markers or to purchase sets, contact me at wgreene@perryinstitute.org. 
+## Installation
 
-<p align="center"> 
-  <img src="https://www.dropbox.com/scl/fi/7w4gp8xrdimjvxeoyzbol/Markers.png?rlkey=rhzm5iduonyqw2mp039w82hhn&raw=1" alt="Corner Markers" width="400"/>
-</p>
-<i> Set of four permanent corner tags utilizing Metashape coded targets. These markers are designed to be nailed to the substrate, demarcating the boundaries of a plot upon setup. Automatic time-series alignment of plots relies on these "ground control points", and subsequent timepoints require only marker cleaning and image acquisition, saving significant time underwater. </i> <br>
-<br>
+You need **Agisoft Metashape Professional 2.0 or newer** (the demo version works for trying it out). ReefShape works on Metashape 2.0 through 2.3 from a single codebase.
 
-These scripts are under active development - we recommend checking periodically to download the latest version. If you are having trouble using any of the scripts, email me at wgreene@perryinstitute.org and I'll get back to you as soon as I can.
+### The Metashape scripts
 
-## ReefShape Software
-This repo is set up with a few important resources (this readme, scalebar example, georeferencing example, & data collection cheat sheet) in the root folder, and a folder called ReefShape_scripts that contains the script collection. For installation, the repo is designed to be downloaded in its entirety with the Code --> Download ZIP button.
+Download this repository (green **Code** button, then **Download ZIP**) and unzip it somewhere. Then:
 
-### Installation
-First off, you need to have <b> Agisoft Metashape Professional Edition v2.0+ </b> installed on your computer. You CAN use ReefShape with the Demo version of Metashape Pro if you want to try before you purchase Metashape.
+* **Windows:** double-click `Install ReefShape (PC).bat`.
+* **Mac:** double-click `Install ReefShape (Mac).command`. The first time, Gatekeeper may block it because it was downloaded from the internet: right-click the file, choose **Open**, then **Open** again. If macOS still refuses, use **System Settings > Privacy & Security > Open Anyway**.
 
-To install the ReefShape scripts, you first need to download this repo (click on the green Code button and choose Download ZIP) and unzip it into a location of your choice. There are then two files to help you install: on PC, double-click on `Install ReefShape (PC).bat`, or on Mac, double-click on `Install ReefShape (Mac).command`. Each of these is essentially just a function to copy the contents of the ReefShape_Scripts folder into the Metashape scripts directory. You can also totally do this manually if that feels more comfortable. When properly installed, a custom ReefShape menu bar item containing buttons for the scripts will appear automatically each time you start Metashape. To install manually, copy the contents of the ReefShape_Scripts folder (not the folder itself) into the following folder, which varies on Mac vs PC:
+The installer copies the contents of `ReefShape_Scripts` into Metashape's scripts folder, checks that the copy worked, and only then removes files it installed earlier (it keeps a list, so it never touches other scripts you have there). Restart Metashape and a **ReefShape** menu appears.
 
-Windows: `C:\Users\[YOUR USERNAME]\AppData\Local\Agisoft\Metashape Pro\scripts`
+To install by hand, copy the *contents* of `ReefShape_Scripts` (not the folder itself, and including the `reefshape_modules` folder) into:
 
-Mac: `/Users/[YOUR USERNAME]/Library/Application Support/Agisoft/Metashape Pro/scripts`
+* Windows: `C:\Users\[you]\AppData\Local\Agisoft\Metashape Pro\scripts`
+* Mac: `/Users/[you]/Library/Application Support/Agisoft/Metashape Pro/scripts`
 
-NOTE: On both Mac and PC, the locations listed above are contained within folders that are hidden by default. You can locate them by manually typing the correct folder path in the path/address bar of Finder / File Explorer. Storing the scripts in other locations will not allow them to be added to Metashape automatically.
+Both locations are hidden by default; type the path into File Explorer or Finder. You can also try a script without installing it via **Tools > Run Script...**, but its menu entry then lasts only until you restart Metashape.
 
-ONE MORE NOTE: On Mac, the first time you run `Install ReefShape (Mac).command`, Gatekeeper may block it because the file was downloaded from the internet. To bypass this, right-click (or Control-click) the file in Finder and choose **Open**, then click **Open** in the warning dialog. If macOS still refuses, open **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway**. After the first run, double-clicking will work normally.
-
-It is also possible to run the scripts without full installation. The user can simply open Metashape and run any of the scripts by clicking on Tools --> Run Script... in Metashape, then selecting the desired script (described below). This will create a custom menu button called <b>ReefShape</b> in the Metashape GUI that has the script inside it. To run it, just click the newly created menu option. Note that the custom menu bar options will be lost upon restarting Metashape unless they are installed properly as described above.
-
-### ReefShape Scripts 
-
-Here's what all the scripts in the ReefShape_scripts folder do.
-
-<b>`ui_components.py`</b> This file contains class definitions for user interface components used in the full workflow script (full_reefshape_workflow.py) and the align timepoints script (align_chunks.py). It cannot function as a standalone script, but in order for the other scripts to run they must be located in the same folder as this file. These components are in a separate file to improve code organization and make it easier for others to expand on these scripts.
-
-<b>`01_full_reefshape_workflow.py`</b> This file is the main script that can run the entire ReefShape process start to finish. When you click on it, it will bring up a dialog box where you can add photos, name the project and chunk, input georeferencing and scaling information, and a few other basic options (if you have already set up your project by adding photos and naming it properly, you may ignore these parts of the dialog box). It has built-in checks to enable the script to be run from any point in the process, and it will not repeat any steps. This allows easy integration of manual processing or refinement at any stage in the process. If you need the script to redo any step in the process (such as model building, orthomosaic building, DEM building, etc.), simply delete the selected data product from the project and run the script again to redo that step. 
-
-<img src="https://www.dropbox.com/scl/fi/x2ry4t0gf0z5pzd4awxyp/SI-2_Metashape-Reef-Script.png?rlkey=a6ehs0jxnaq47cb2l9pilzl0e&raw=1" alt="ReefShape Dialog Box" width="600"/>
-<i> The dialog box for the full ReefShape workflow. It allows for all necessary information to be input at once for full automation of the photogrammetry process. </i> <br>
-<br>
-
-
-<img src="https://www.dropbox.com/scl/fi/fiiu6kzgp6liv1ysumicb/ReefShape-Workflow.png?rlkey=l8esgwdwthnh7wl0qeviqhb2p&raw=1" alt="ReefShape Process" width="800"/>
-<i> Flow diagram of the process automated within the full ReefShape workflow script.  </i> <br>
-<br>
-
-<b>`02_align_chunks.py`</b> This script implements a dialog box used to align two timepoints of a photomosaic plot to one another, each of which is contained within a separate chunk of the same project. The script is meant to be used in conjunction with the underwater workflow implemented in full_reefshape_workflow.py. Once the user has collected subsequent sets of photos of a plot with permanent corner markers, this script can be run to align the subsequent sets to a previous timepoint. The data from the earlier time point must be already processed before this script is used. It functions by detecting markers in the "target chunk", creating a temporary reference file with the precise estimated locations of the corner markers from the "reference chunk", and importing them into the target chunk. After running this script, the user should verify the four corner markers were detected properly and that the reference information was imported successfully before running the full reefshape workflow to complete the photogrammetry process and generate data products. If the targets failed to be detected, the user can manually place markers (with the proper names, i.e. "target 1") and re-run the align chunks script to bring over the referencing information from the reference timepoint again.
-
-<img src="https://www.dropbox.com/scl/fi/g5hswvnsz8ltvcrjl0izl/SI-3_Align-Timepoints-Script.png?rlkey=xjthfx7vfn3yw5o3vs145aw2a&raw=1" alt="Align Timepoints Dialog Box" width="500"/>
-<i> The Align Timepoints dialog box, facilitating time-series alignment. </i> <br>
-<br>
-
-<b>`03_align_chunks_ICP.py`</b> This script aligns one chunk to another using ICP (Iterative Closest Point), with no need for shared corner markers between the two chunks. It is designed for cases where you want to co-register timepoints (or any two overlapping surveys) that don't have shared ground control — for example, repeat photogrammetry of a reef from year to year where the markers weren't permanent, or weren't detected reliably. The user picks a "master" (reference) chunk and a "moving" chunk, and selects whether each chunk's source data should be sparse tie points (fast, no preprocessing required) or 3D mesh vertices (denser and gives a much tighter fit, but requires that a mesh has already been built in each chunk). A common workflow is a quick first pass with tie points, then a high-quality refinement using mesh vertices. The script applies the resulting rigid transform to the moving chunk's chunk transform, co-registering its cameras, tie points, and any subsequently built mesh/dense cloud. For best results, pre-align the two chunks roughly (e.g. via a few rough markers or a coarse rotation) and consider cropping each chunk to the overlapping region first. Adapted from Agisoft's `align_model_to_model.py`.
-
-<b>`04_optimization_process.py`</b> This script employs a tie-point culling and camera calibration optimization process to improve alignment accuracy and reconstruction consistency. It first culls tie points with a reconstruction uncertainty statistic above 25, then culls remaining tie points with a projection accuracy statistic worse than 15. Finally, it optimizes the camera alignment with all parameters checked and "fit additional corrections" checked. In our experience, fitting all possible parameters helps to properly account for atypical lens distortions associated with dome ports and aspherical lens elements and improves geometric consistency between timepoints. While this process is integrated into the full workflow, it is sometimes useful to have this functionality as a standalone utility. 
-
-<b>`05_scale_model.py`</b> This script prompts the user for a scalebar text file containing the lengths of scalebars that may be present in the currently selected chunk / timepoint. It then creates scalebars out of any scalebar marker pairs found in the chunk and inputs the correct lengths and measurement accuracies, then updates the referencing to reflect this information. While this process is integrated into the full workflow, it is sometimes useful to have this functionality as a standalone utility. 
-
-<b>`06_create_boundary.py`</b> This script brings up a GUI box that lists the markers in the currently selected chunk, shows them on a plan view, and lets the user pick the markers (and their order) that make up the plot outline. It generates an outer boundary polygon from them. By default the full workflow does this automatically from the convex hull of every georeferenced marker, so this tool is for the cases where you want a different shape. If the chunk already has a boundary, you are asked before it is replaced.
-
-<b>`07_copy_boundary.py`</b> This script brings up a GUI box that allows the user to select a source chunk and a target chunk. It functions by copying the outer boundary polygon from the source chunk into the target chunk (asking first if the target already has one). This is useful for copying a custom ROI between chunks to get aligned outputs for taglab.
-
-<b>`08_create_boundary_from_photos.py`</b> This script generates an outer boundary polygon by tracing the outline of the aligned camera positions, rather than from corner markers. It's especially useful after using `03_align_chunks_ICP.py` (where you may have no shared markers to define a boundary), or any time you want the ROI to follow your actual photo coverage rather than a marker-to-marker rectangle. The user specifies the photo footprint radius (auto-estimated from camera altitude and FOV but user-adjustable); each camera position is buffered into a circle of that radius and unioned with `shapely` to produce the boundary. The largest connected region is kept (so a few stray cameras don't pull the boundary out of shape) and interior holes are dropped. The resulting polygon is smooth by construction — no rasterization in the pipeline, no staircase artifacts — and is added to the chunk as the OuterBoundary, ready to be used by the area ratio script or to clip exported data products.
-
-<b>`09_calculate_area_ratio.py`</b> This script automates the process of calculating the 3D to 2D surface area ratio (a commonly-used rugosity metric) for the currently selected chunk / timepoint. It does this in full 3D (as opposed to 2.5D, as in most GIS workflows), thereby capturing a better representation of the reef that includes underhangs. It accomplishes this task by duplicating and clipping the 3D mesh by the polygon defined as the outer boundary (which is automated in the full workflow and create boundary scripts, but can be done manually as well), then calculating the 3D surface area of the clipped mesh and comparing it to the 2D planar area of the boundary to generate the ratio. The temporary clipped mesh is then deleted. A GUI box displays the calculated ratio, and it is printed in the console as well. For this script to function properly, a single outer boundary polygon and 3D mesh must be present in the chunk.
-
-<b>`10_clean_project.py`</b> This script looks in the currently selected chunk / timepoint for unnecessary files for long-term storage (key points, depth maps, orthophotos), and deletes them. This dramatically reduces file sizes and is recommended to be run once the user is happy with the data products for a given timepoint. 
-
-<b>`11_gridded_rugosity.py`</b> This script computes the 3D/2D surface area ratio (rugosity) on a user-selected grid (0.25 m to 5 m, defaulting to 1 m via a slider in the dialog) within the currently selected chunk's outer boundary polygon, and imports the result back into the chunk as a labeled DEM (e.g. "Rugosity (1.00m grid)") alongside (not replacing) the project's real DEM. Like `09_calculate_area_ratio.py`, it uses the full 3D mesh rather than a 2.5D DEM, so overhangs are captured correctly. Unlike that script, it doesn't duplicate-and-clip the mesh per cell — instead it iterates the mesh's triangles exactly once, computes each triangle's 3D area, and accumulates it into the cell containing the triangle's centroid. Per-cell rugosity is the accumulated 3D area divided by the cell footprint, so an overhang (two slabs of mesh stacked over one cell) gives rugosity ≈ 2. The grid is derived from the boundary polygon's bounding box snapped to the cell size, so two timepoints with the same boundary produce pixel-aligned rasters that can be subtracted, regressed, or differenced directly. The dialog also has an "Also save raster to disk" checkbox — when enabled, the GeoTIFF is also copied to a user-selected folder as `<project>_<chunk>_rugosity_<size>cm.tif`; otherwise it's only kept inside the chunk. Requires a 3D model and an OuterBoundary polygon in the chunk; depends on `rasterio` (auto-installed on first run via the `pip_auto_install` helper).
-
-<b>`14_export_compressed_dem.py`</b> Metashape's normal Export DEM dialog, with LZW compression switched on. DEMs exported this way are a fraction of the size of the uncompressed default.
-
-<b>`15_build_scalebar_file.py`</b> Builds (or adds to) the scalebar text file the workflow reads. Enter each bar's marker numbers, its length in centimetres and its accuracy in millimetres; the file is written in the metre units the workflow expects, and can be set as the default scalebar file for the full workflow dialog.
-
-<i>Note: The scripts are prefixed with a number so that they appear in the proper order in the ReefShape menu bar dropdown. Over time, new scripts may be added, and thus the numbering on these scripts are subject to change.</i> 
+**Dependencies.** A few tools need extra Python packages (ICP alignment: open3d, scipy, numpy; boundary from photos: numpy, shapely; rugosity tools: numpy, rasterio). They are installed automatically, once, the first time a tool needs them, after asking you. No administrator rights are needed, and installs survive Metashape updates.
 
 ### ReefShape Batch
 
-`ReefShape_Batch` is a separate program for processing many plots in one go, outside of Metashape's own window. It drives Metashape in the background, so it needs Metashape Professional installed and licensed, but nothing else: it runs on the Python that ships with Metashape. Start it with `ReefShape Batch (PC).bat` or `ReefShape Batch (Mac).command` in that folder.
+Nothing to install: run `ReefShape_Batch/ReefShape Batch (PC).bat` or `ReefShape Batch (Mac).command`. It uses the Python that ships inside Metashape (on a Mac it finds a Python that can draw windows and tells you if none is available). Metashape Professional must be installed and licensed on the same computer. If it is in an unusual location the app asks you to locate it, or set the `REEFSHAPE_METASHAPE` environment variable. Running the launcher with `--check` prints what it found, which is the first thing to try if it will not start.
 
-* **Build a queue.** Add plots one at a time, or use *Scan folder* to create one job per photo folder under a season's directory. Each row is either a *new plot* (a project is created from the photos) or a *re-photography* visit (the new photos are added to an existing project as a new chunk and aligned to an earlier timepoint, as Align Timepoints does, with optional ICP alignment for plots without permanent markers).
-* **Settings templates.** Save one set of processing, export and georeferencing settings and apply it to any or all of the jobs. A plot keeps its own georeferencing file, and a re-photography job keeps its own alignment choices.
-* **Run.** Choose how many jobs run at once and whether to stop on the first failure. Each job is its own Metashape process, so one that crashes does not take the rest down, and jobs on the same project are run one after another. Progress, a live log and warnings show per job; the full log of every job is also written beside its project.
-* **Pick up where it stopped.** Every stage saves as it finishes and is skipped if its product already exists, so retrying a failed, stopped or interrupted job continues from the last stage rather than starting again. A job whose referencing did not work stops after the mesh as *Needs referencing*, without failing the rest of the batch; add the referencing and run again to finish it.
-* **Batches are files.** Save a queue as a `.rsbatch` file to keep a record of what was processed or to prepare it on one computer and run it on another.
+## Processing one plot
 
-### Processing choices worth knowing
+Choose **ReefShape > Full ReefShape Workflow**. The dialog is divided into collapsible panels, and any panel whose work is already done in the chunk collapses itself and is marked *Complete*.
 
-* **Resolution.** With a custom orthomosaic resolution the DEM is built at that resolution, the orthomosaic is built over it, and the stored DEM is then rebuilt at four times the orthomosaic's cell size (the full-resolution one is deleted). With the default resolution Metashape picks both: the orthomosaic is built from the mesh at the resolution its flight height and image resolution imply, and the DEM at the resolution the mesh's density implies. Default mode is slower, because the orthomosaic is not built over a DEM.
-* **Boundary.** By default the plot boundary is the convex hull of the georeferenced corner markers. It can instead follow photo coverage, or be turned off, which also turns off the TagLab outputs (they must be clipped to the plot). A boundary that already exists in the chunk, such as one copied across by Align Timepoints, is always kept.
-* **TagLab outputs.** *TagLab outputs* are single JPEG-compressed files plus a TagLab project file, for the TagLab version that accepts large images. *TagLab outputs (legacy)* are for the standard, unmodified TagLab: LZW-compressed, split into blocks of at most 32767 px, with the DEM on the orthomosaic's grid, in a `taglab_outputs_legacy` folder. When a legacy export has to fall back to photo coverage because no marker boundary exists, the full workflow dialog asks whether to continue, since a boundary that differs between visits will not line up in TagLab.
-* **Safe re-runs.** Exports are written under a temporary name and renamed when complete, so a run that is killed part-way cannot leave a half-written file that a later run would mistake for a finished one.
+<img src="https://www.dropbox.com/scl/fi/x2ry4t0gf0z5pzd4awxyp/SI-2_Metashape-Reef-Script.png?rlkey=a6ehs0jxnaq47cb2l9pilzl0e&raw=1" alt="ReefShape Dialog Box" width="600"/>
+<i>The full workflow dialog. Everything needed for the whole pipeline is entered here at once.</i>
 
-### Other Files
+| Panel | What you set |
+|---|---|
+| **Project Setup** | Create or name the project, add the photo folder, name the chunk (the capture date, `YYYYMMDD`, is filled in for you). Skip it if the project already exists. |
+| **General** | Generic preselection, mesh quality, optional vertex colors, orthomosaic resolution (a custom value or Metashape's default), and where the plot boundary comes from. |
+| **Georeferencing** | Coordinate system, marker target type, the scalebar file, the georeferencing file and its column layout. Choose *No* if the chunk is already referenced or you will reference it by hand. |
+| **Export** | Output folder, processing report, GIS outputs, TagLab outputs, and the legacy TagLab outputs. |
 
-These are the additional files in the Resources folder of this repo:
+### What the workflow does
 
-<b>`Scalebar Example.txt`</b> This file is an example text file that contains the scalebar lengths. A scalebar in this context consists of a "bar" (usually a piece of acrylic, generally ~580mm x 80mm x 3mm) with printed coded Metashape targets taped / glued to either end (see image below). The targets used for scalebars must all be unique, and when using this process, markers 1-4 are reserved for corner markers. For each scalebar, the user must measure the distance between the centerpoints of the targets, then add a line in a text file that corresponds to that scalebar. Each time this scalebar is detected in a project, its distance will be input into Metashape's reference panel. See text file for the correct formatting.
+<img src="https://www.dropbox.com/scl/fi/fiiu6kzgp6liv1ysumicb/ReefShape-Workflow.png?rlkey=l8esgwdwthnh7wl0qeviqhb2p&raw=1" alt="ReefShape Process" width="800"/>
+
+1. **Align** the photos (two passes, since the second often picks up photos the first missed). Markers are switched off during alignment so a target that shifted between visits cannot distort it, and restored afterwards.
+2. **Detect markers, import their coordinates, and build the scalebars** from your two files.
+3. **Optimize** the cameras: remove high-error tie points, then fit all lens parameters, which suits dome ports and aspherical lenses.
+4. **Check the scalebar targets for movement** and remove the photos in which a target appears to have shifted ([details](#scalebar-targets-that-move)).
+5. **Build depth maps and the mesh.**
+6. **Build the orthomosaic and DEM** ([resolution rules](#resolution)).
+7. **Create the plot boundary** ([options](#plot-boundary)).
+8. **Export** the report, GIS products, boundary shapefile and TagLab products.
+9. **Clean the project** of data not needed for long-term storage and save.
+
+### Stopping, resuming and redoing steps
+
+Every stage is skipped if its product already exists and the project is saved after each one, so you can run the workflow from any point, interrupt it, or do a step by hand and carry on. To redo a stage, delete its product in Metashape (the mesh, orthomosaic, DEM, an export file...) and run the workflow again.
+
+The workflow also **stops early, cleanly, in two situations** where continuing would waste hours or fail:
+
+* With no georeferencing and no markers it stops after the mesh so you can reference, level and scale the model by hand, then re-run to finish.
+* If the chunk has **no scale** (for instance the scalebar targets were not detected), or the scale implies an absurd plot size, it stops before building the DEM and explains what to check. Alignment and the mesh are kept.
+
+Problems that can be known up front are reported before any processing starts: an unsaved project, no photos, or georeferencing turned on without its files.
+
+## Repeat visits (time series)
+
+Plots with **permanent corner markers** are aligned to an earlier visit through those markers.
+
+1. Create a second chunk in the same project and add the new photos.
+2. Run **ReefShape > Align Timepoints**. Choose the earlier chunk as the reference and the new chunk as the active one. If any marker moved between visits (a corner tag knocked loose, say), add it under *Damaged markers*: it is kept but trusted far less. The script detects the markers in the new chunk, imports the reference chunk's precise estimated marker positions, weights them, recomputes the transform, and **copies the plot boundary across** so both timepoints cover exactly the same ground.
+3. Check that the markers were detected and the reference information imported, then run the **Full ReefShape Workflow** on the new chunk.
+
+<img src="https://www.dropbox.com/scl/fi/g5hswvnsz8ltvcrjl0izl/SI-3_Align-Timepoints-Script.png?rlkey=xjthfx7vfn3yw5o3vs145aw2a&raw=1" alt="Align Timepoints Dialog Box" width="500"/>
+
+If a target was not detected, place the marker by hand with the right name (for example `target 1`) and run Align Timepoints again.
+
+**No permanent markers?** Use **ReefShape > Tools > Align Timepoints (ICP)**. It matches the two surveys by their surfaces (Iterative Closest Point) with no shared markers needed. For best results pre-align the chunks roughly. In ReefShape Batch, ICP is an option on a re-photography job: the new timepoint is first georeferenced and scaled from its own temporary targets, then matched to the reference chunk after its mesh is built, and the fit quality is recorded with a warning if it looks poor.
+
+## ReefShape Batch
+
+`ReefShape_Batch` processes many plots in one queue without you sitting in front of Metashape. It drives Metashape in the background, one separate process per job.
+
+* **Two kinds of job.** A *new plot* creates a project from the photos. A *re-photography* job opens an existing project, adds the new photos as a new chunk, and aligns it to a reference chunk (by shared markers, or ICP), choosing from lists read from the project. You see how the earlier timepoint was processed (mesh quality, orthomosaic resolution) so you can match it.
+* **Build the queue quickly.** *Scan folder* creates one job per photo folder under a season's directory (dated `YYYYMMDD` folders name the chunk). *Duplicate* copies a job, and **settings templates** apply one set of processing, export and georeferencing settings to any or all jobs. A job keeps its own georeferencing file, and a re-photography job keeps its own alignment choices.
+* **Run it.** Choose how many jobs run at once (more than two compete for the GPU) and whether to stop on the first failure. A crashing job fails only itself, and jobs on the same project run one after another. Progress, a live log and warnings are shown per job. A full log is also written beside each project as `<project>_<chunk>_batch.log`.
+* **Pick up where it stopped.** Failed, cancelled or interrupted jobs resume from their last completed stage when you run again, and jobs that were running when the app closed unexpectedly come back as waiting. A job whose referencing did not work stops after the mesh as **Needs referencing** without failing the rest of the batch; add the referencing and run again to finish it.
+* **Batches are files.** Save a queue as a `.rsbatch` file to keep a record of what was processed, or to prepare it on a laptop and run it on the workstation.
+* **No questions mid-run.** The two questions the interactive workflow can ask (replace a leftover high-resolution DEM, and continue with a photo-coverage boundary) are answered with their OK option in a batch: the DEM is resampled, and a photo-coverage fallback is recorded as a warning on the job.
+
+## Processing choices worth knowing
+
+### Resolution
+
+* **Custom orthomosaic resolution (the default is 0.5 mm).** The DEM is built at that resolution so the orthomosaic is not resampled from a coarser surface, the orthomosaic is built over it, and the stored DEM is then rebuilt at **four times the orthomosaic's cell size** and the full-resolution DEM is deleted (a 0.5 mm orthomosaic keeps a 2 mm DEM). If a project already holds a finer DEM than that, you are asked before it is replaced.
+* **Default resolution.** Metashape picks both, from different things: the orthomosaic's from the flight height and image resolution, and the DEM's from the density of the mesh. The orthomosaic is built straight from the mesh, then the DEM, so each gets its own default. This is slower than building the orthomosaic over a DEM, but needs no resolution to be guessed.
+
+### Plot boundary
+
+By default the boundary is the **convex hull of every georeferenced marker**, which needs no particular marker numbering or order, ignores a control point inside the plot, and works for plots with more than four corners. Alternatives:
+
+* **Photo coverage:** follows the area actually photographed, for plots with no corner markers. It shifts from visit to visit.
+* **None:** no boundary shapefile, and the TagLab outputs are skipped (they must be clipped to the plot).
+* A boundary **already in the chunk** (for example copied across by Align Timepoints) is always kept, and the dialog tells you so.
+
+*Tools > Create Boundary from Markers* is for a custom outline: pick markers from a list shown on a plan view, put them in order, and it warns if the outline crosses itself.
+
+### TagLab outputs
+
+* **TagLab outputs** are for the TagLab version that accepts large, JPEG-compressed images: the orthomosaic and DEM clipped to the boundary as single files, plus a TagLab project file (named from the chunk, with the capture date and the orthomosaic's resolution filled in).
+* **TagLab outputs (legacy)** are for the standard, unmodified TagLab: LZW-compressed, split into blocks of at most 32767 px, with the DEM resampled to the orthomosaic's grid so the two line up, written to a `taglab_outputs_legacy` folder. They are much larger. If a legacy export has to fall back to photo coverage because no marker boundary exists, the dialog asks whether to continue, since a boundary that differs between visits will not line up in TagLab. Cancel, fix the boundary (check the orthomosaic against the earlier visit, then use *Copy Boundary*), and run again.
+
+### Scalebar targets that move
+
+A scalebar target nudged part-way through a dive is seen in two places, which bends the scale. Before the mesh is built the workflow removes the photos in which a scalebar target's pixel error is above 10 px, so the target is located from the photos where it stayed put. A bar is kept only if each end still has at least three good photos and at least three photos show both ends together. Otherwise its accuracy is loosened to 10 mm so the scale follows the other bars (a bar is never removed outright, so there is always some scale). If no bar can be cleaned reliably you are warned and the scale is left as it was. A bar that still measures more than 0.5% off its nominal length is also reported.
+
+### Reliability
+
+Exports are written under a temporary name and renamed when finished, so a run that is killed part-way cannot leave a half-written file that a later run would take for a finished one. File names are made safe if a chunk label contains characters such as `/` or `:`.
+
+## Menu reference
+
+All scripts install into the **ReefShape** menu in Metashape. The numeric prefixes only keep them in order.
+
+### Main workflow
+
+| Menu item | Script | What it does |
+|---|---|---|
+| **Full ReefShape Workflow** | `01_full_reefshape_workflow.py` | The whole pipeline from one dialog; see [Processing one plot](#processing-one-plot). |
+| **Align Timepoints** | `02_align_chunks.py` | Aligns a new chunk to an earlier one through shared corner markers, and copies the boundary across. |
+
+### Tools menu
+
+| Menu item | Script | What it does |
+|---|---|---|
+| **Align Timepoints (ICP)** | `03_align_chunks_ICP.py` | Registers one chunk onto another by surface matching (tie points or mesh vertices, with optional crop-to-overlap and generalized ICP), for plots without shared markers. Adapted from Agisoft's `align_model_to_model.py`. |
+| **Optimize Cameras and Model** | `04_optimization_process.py` | Removes tie points with reconstruction uncertainty above 25 and projection accuracy above 15, then fits all camera parameters. Already part of the full workflow; useful stand-alone. |
+| **Create Scalebars from Targets** | `05_scale_model.py` | Reads a scalebar file and creates the scalebars for the marker pairs found in the chunk. Tolerates a header row and targets missing from the chunk. |
+| **Build Scalebar File** | `15_build_scalebar_file.py` | Builds or extends a scalebar file. Enter lengths in centimetres and accuracies in millimetres; it writes the metre units the workflow expects, and can set the file as the workflow's default. |
+| **Create Boundary from Markers** | `06_create_boundary.py` | Builds a boundary from markers you pick and order, shown on a plan view. Asks before replacing an existing boundary. |
+| **Create Boundary from Photos** | `08_create_boundary_from_photos.py` | Builds a boundary from the aligned camera positions and the photo footprint (estimated from camera height and field of view, adjustable). Holes are filled and stray cameras ignored. |
+| **Copy Boundary** | `07_copy_boundary.py` | Copies the outer boundary from one chunk to another, asking before replacing one. Keeps outputs pixel-aligned for TagLab. |
+| **Calculate Surface Area Ratio** | `09_calculate_area_ratio.py` | The 3D to 2D surface area ratio (a rugosity measure) inside the outer boundary, in full 3D so underhangs count. Needs a mesh and an outer boundary. |
+| **Gridded Rugosity** | `11_gridded_rugosity.py` | Rugosity on a grid (0.25 m to 5 m) inside the boundary, added to the chunk as a labeled DEM and optionally saved as a GeoTIFF. Fast: it measures each triangle once. |
+| **Gridded Rugosity (Exact)** | `12_gridded_rugosity_clip.py` | The same product, but each cell is measured by clipping a copy of the mesh to it, which matches a manual clip-and-measure check exactly. Slower (minutes to tens of minutes). |
+| **Compare Rugosity** | `13_compare_rugosity.py` | The fractional change in rugosity between two timepoints, cell by cell. Both chunks need rugosity rasters on the same grid (same cell size and boundary). |
+| **Export Compressed DEM** | `14_export_compressed_dem.py` | Metashape's Export DEM dialog with LZW compression switched on, for far smaller files. |
+| **Clean Project** | `10_clean_project.py` | Deletes key points, depth maps and orthophotos from the current chunk to shrink the project for long-term storage. Run it once you are happy with the products. |
+
+`ui_components.py` and the `reefshape_modules` folder are shared code, not tools. They must stay in the same folder as the scripts. `reefshape_modules` holds the processing core used by both the menu scripts and ReefShape Batch, so the two cannot drift apart.
+
+## Input files
+
+Example files are in the `Resources` folder.
+
+### Scalebar file
+
+A scalebar is a bar (usually acrylic, about 580 x 80 x 3 mm) with a coded Metashape target at each end. Measure the distance between target centres and add a line per bar to a text file:
+
+```
+target 19,target 20,0.49650,0.00025
+```
+
+That is the two marker labels, the distance in metres, and the accuracy in metres. Each bar's targets must be unique. One master list serves every plot in a survey: bars that are not found in a given plot are skipped. See `Scalebar Example.txt`, or use **Tools > Build Scalebar File**.
 
 <img src="https://www.dropbox.com/scl/fi/g3oeph5ca859ie4kv7pc4/ScalebarImage.png?rlkey=b496gwbdrvssrrgcvgshk6wds&raw=1" alt="Scalebar Image" width="600"/>
-<i> Example illustration of a scalebar </i> <br>
-<br>
+<i>A scalebar.</i>
 
-<b>`Georef Example.csv`</b> This CSV file shows the correct format for georeferencing information, matching what is exported by the ReefShape Survey123 survey designed to accompany this method (see below section for more details). We strongly recommend using the ReefShape survey to collect GPS data, however it is possible to use another collection method. If you choose to collect GPS data with a handheld receiver (GPS dive watch, Garmin eTrex, etc), you must download and format your own data for input into the ReefShape workflow script. Use this csv file as a template. In order for the script to run properly, you must specify how your georeferencing file is formatted in the ReefShape dialog box, i.e. which reference values (lat, long, depth, etc) are in which columns. The Full ReefShape Workflow script is set by default to match the formatting of this example file, where the label (target name) is column 1, latitude is column 2, longitude is column 3, depth is column 4, xy accuracy is column 5, and z accuracy is column 6. Since there is one header row, the import starts at row 2. Lat and long must be in decimal degrees, depth must be in negative meters, and the file must be saved as a simple CSV.
+### Georeferencing file
 
-<b>`Data Collection Cheat Sheet.pdf`</b> This PDF has useful reminders for how to set up plots and carry out data collection correctly to work with these scripts. It is not a full explanation of anything; rather it is meant to be used as a quick reference in the field to make sure you aren't forgetting anything!
+A simple CSV giving each corner marker's location. The format matches the ReefShape Survey123 export (`Georef Example.csv`). By default the dialog expects label in column 1, latitude in column 2, longitude in column 3, depth in column 4, horizontal accuracy in column 5 and vertical accuracy in column 6, with one header row so the import starts at row 2. Latitude and longitude are decimal degrees, and depth is in **negative metres**. If your file is laid out differently, set the column numbers in the dialog's Column Formatting box (or in the batch job's georeferencing section). Save it as a plain CSV.
 
+### Data collection cheat sheet
 
-## Collecting location information for ReefShape
+`Data Collection Cheat Sheet.pdf` is a field reminder for plot setup and data collection. It is a checklist, not a full explanation.
 
-We have created a public Survey123 survey to facilitate easy GPS data collection to accompany this workflow. When a survey is submitted, it automatically emails pre-formatted location data to the user. The survey can be accessed by anybody for free, even without an ArcGIS Online account. The user must download the ESRI Survey123 app on their smartphone, then follow this <a href="https://arcg.is/1aOnKS0">link to the survey</a> (or scan the QR code below) and select the option to open the survey in the app. The survey is meant to be filled out in the field, using either your phone's location or the location of a bluetooth receiver such as a Garmin GLO2 or Bad Elf GPS. The user should place their smartphone in a waterproof pouch or case, and swim out over the locations of each of the four corner markers that define the plot. If GPS locations are collected using an alternative method (handheld GPS, RTK GNSS system, drone, etc), the survey can be filled in with the corresponding location data to aid in correctly formatting it for use in the ReefShape process. 
+## Field method
 
-The survey contains a repeating section allowing for the input of a GPS point and depth corresponding to each marker. The first repeat corresponds by default to target 1; the user should locate that marker, hold the phone or bluetooth receiver directly above it, then press the crosshairs button to record the location, then repeat for all corners. Once the locations of the corner markers are recorded, the corresponding depths, which should be measured in meters with a dive watch or other instrument, can be input for each target. Once this process is complete, the survey can be submitted and an email will be sent to the user with the pre-formatted data, ready to be plugged into the full ReefShape workflow script. Remember: if you're using real-world coordinates, the coordinate system (CRS) in the Full ReefShape Workflow dialog box should be set to WGS84 + EGM96 (EGM96 is a global geoid model included in Metashape that approximates sea level as opposed to regular WGS84 that uses an ellipsoidal height).
+### Corner markers
+
+ReefShape needs auto-detectable corner markers, permanently installed for time-series monitoring or placed temporarily. We make two kinds: flexible molded PVC pucks, and experimental anti-fouling markers that resist algal growth. Both can be nailed, epoxied or cemented to the substrate. To ask about them or to buy sets, email wgreene@perryinstitute.org.
+
+<p align="center">
+  <img src="https://www.dropbox.com/scl/fi/7w4gp8xrdimjvxeoyzbol/Markers.png?rlkey=rhzm5iduonyqw2mp039w82hhn&raw=1" alt="Corner Markers" width="400"/>
+</p>
+<i>A set of four permanent corner tags using Metashape coded targets, designed to be nailed to the substrate. Time-series alignment depends on them as ground control points, so later visits need only marker cleaning and photography.</i>
+
+### Collecting location information
+
+A public Survey123 survey makes GPS collection easy and emails you pre-formatted location data. Anyone can use it free, with no ArcGIS Online account. Install the ESRI Survey123 app on a smartphone, open the <a href="https://arcg.is/1aOnKS0">survey link</a> (or scan the QR code below) in the app, and fill it in on the plot, using the phone's location or a Bluetooth receiver such as a Garmin GLO2 or Bad Elf. Keep the phone in a waterproof pouch and swim over each corner marker. The repeating section takes a GPS point for each marker (the first repeat is target 1 by default) and then each marker's depth in metres from a dive watch or similar. On submission you are emailed the file, ready to use in the workflow. Other collection methods (handheld GPS, RTK GNSS, a drone) work too: enter their locations in the survey so the file is formatted correctly.
 
 <img src="https://www.dropbox.com/s/up21rqn1k8v4hr5/SI-1_Survey123.jpeg?raw=1" alt="ReefShape Survey123 Screenshot" width="600"/>
-<i> Screenshot of the Survey123 ReefShape Interface. </i> <br>
-<br>
+<i>The ReefShape Survey123 form.</i>
 
 ![image](https://github.com/Perry-Institute/ReefShape/assets/117117153/c61a2638-63a9-44ef-8104-667496354bcf)
 
-### What if I do not or cannot collect real-world location data?
+With real-world coordinates, set the coordinate system in the dialog to **WGS84 + EGM96** (EGM96 is a global geoid model that approximates sea level, as opposed to plain WGS84 with its ellipsoidal heights).
 
-Don't worry! We've created a parallel survey called ReefShape Local that helps the user create a georeference file for ReefShape that uses local coordinates instead of GPS coordinates. You can access the survey here: <a href="https://arcg.is/1fWWa01">ReefShape Local</a>. The way it works is simple: you just tell the survey which marker corresponds to which corner (northeast, southeast, southwest, northwest, or north, east, south, west, depending on how you lay out your plot), and input its depth, and the survey does the rest for you, creating and emailing you a reference file that allows for full automation using ReefShape. Remember: if you're using ReefShape Local and NOT using real-world location data, the coordinate system (CRS) in the Full ReefShape Workflow dialog box should be left in Local Coordinates (m).
+**No real-world location data?** Use the parallel survey, <a href="https://arcg.is/1fWWa01">ReefShape Local</a>. You tell it which marker is at which corner (northeast, southeast, southwest, northwest, or north, east, south, west) and enter the depths, and it emails a reference file in local coordinates. In that case leave the coordinate system at **Local Coordinates (m)**.
 
+## Troubleshooting
 
-That's all for now! I hope ReefShape helps save you time and energy on your coral photogrammetry projects and allows you to spend more time collecting important ecological data to help understand and protect our reefs.
+| Symptom | What to try |
+|---|---|
+| No **ReefShape** menu in Metashape | Run the installer and restart Metashape. If you installed by hand, the scripts must sit directly in the scripts folder, not in a subfolder, together with `ui_components.py` and `reefshape_modules`. |
+| The workflow stopped with "referencing needed" | The model had no georeferencing, or no scale. Check that the markers were detected and the scalebar and georeferencing files match the targets in the plot, add or fix the referencing, and run the workflow again; it resumes from the DEM. |
+| "Georeferencing is turned on, but the file was not found" | Choose both files in the Georeferencing panel, or set it to *No* if you will reference the model by hand. |
+| A dialog does nothing, or an error appears | Errors are shown in a message box. The full details are in Metashape's Console (View > Console). |
+| Dependency install on first use | Expected, once: ICP, boundary-from-photos and rugosity tools install their packages after asking. Without internet access they cannot, so run them once while connected. |
+| ReefShape Batch will not start | Run its launcher with `--check` in a terminal to see what it found. Check that Metashape Professional is installed and licensed, or set `REEFSHAPE_METASHAPE` to its install folder. |
+| A batch job failed | The **Notes** column shows the reason, and each job's log (`<project>_<chunk>_batch.log`, beside the project) has the full transcript. Fix the cause and press **Run batch** again: finished stages are skipped. Unexpected errors in the batch window itself are logged to `errors.log` in the `ReefShape` folder of your user settings. |
+| Running two batch jobs slows everything | They share one GPU and the memory. One at a time is usually fastest unless the computer has several GPUs. |
+
+If you are stuck, email wgreene@perryinstitute.org. The scripts are under active development, so check back periodically for the latest version.
+
+---
+
+That's all for now. I hope ReefShape saves you time and energy on your coral photogrammetry projects and lets you spend more of it collecting the ecological data that helps us understand and protect reefs.
 
 -Will
 
 ## Citation
+
 If you use ReefShape, please cite it:
+
 ```bibtex
 @article{ReefShape,
 	title = {Reefshape: A System for the Efficient Collection and Automated Processing of Time-Series Underwater Photogrammetry Data for Benthic Habitat Monitoring},
@@ -170,7 +286,10 @@ If you use ReefShape, please cite it:
 	journal = {Journal of Visualized Experiments},
 	number = {220},
 	year = {2025},
-  pages = {67343},
+	pages = {67343},
 	issn = {1940-087X},
 	doi = {10.3791/67343}
 }
+```
+
+ReefShape is released under the MIT License (see `LICENSE`).
