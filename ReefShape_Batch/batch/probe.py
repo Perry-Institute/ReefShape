@@ -19,7 +19,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Dict, List, Optional
+import time
+from typing import Callable, Dict, List, Optional
 
 from . import metashape_locate
 
@@ -34,6 +35,10 @@ _WORKER = "probe_project.py"
 
 class ProbeError(Exception):
     """Raised when a project could not be inspected."""
+
+
+class ProbeCancelled(ProbeError):
+    """The user gave up waiting. Not an error worth showing."""
 
 
 def worker_dir() -> str:
@@ -125,9 +130,14 @@ def clear_cache(path: Optional[str] = None) -> None:
         _cache.pop(os.path.normcase(os.path.abspath(path)), None)
 
 
-def probe_project(project_path: str, install=None,
-                  use_cache: bool = True) -> ProjectInfo:
+def probe_project(project_path: str, install=None, use_cache: bool = True,
+                  pump: Optional[Callable[[], bool]] = None) -> ProjectInfo:
     """Inspect `project_path` and return its structure.
+
+    `pump`, if given, is called about ten times a second while Metashape runs.
+    A GUI passes a function that keeps its event loop turning and returns True
+    once the user has cancelled, so the window neither freezes for the length
+    of a slow project open nor leaves them with no way out.
 
     Raises ProbeError with a message fit to show the user directly.
     """
@@ -155,15 +165,37 @@ def probe_project(project_path: str, install=None,
     handle, out_path = tempfile.mkstemp(prefix="reefshape_probe_", suffix=".json")
     os.close(handle)
 
+    # Console output goes to a file, not a pipe: nothing reads a pipe while we
+    # are polling, so a chatty Metashape could fill it and stall for good.
+    handle, console_path = tempfile.mkstemp(prefix="reefshape_probe_",
+                                            suffix=".log")
+    os.close(handle)
+
     try:
-        completed = subprocess.run(
-            [str(install.executable), "-r", script, project_path, out_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            timeout=PROBE_TIMEOUT_SECONDS,
-            **_no_window(),
-        )
+        with open(console_path, "w", encoding="utf-8", errors="replace") as console:
+            process = subprocess.Popen(
+                [str(install.executable), "-r", script, project_path, out_path],
+                stdout=console, stderr=subprocess.STDOUT,
+                **_no_window())
+            deadline = time.time() + PROBE_TIMEOUT_SECONDS
+            try:
+                while True:
+                    try:
+                        process.wait(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                    if pump is not None and pump():
+                        raise ProbeCancelled("Cancelled")
+                    if time.time() > deadline:
+                        raise subprocess.TimeoutExpired(
+                            process.args, PROBE_TIMEOUT_SECONDS)
+            except BaseException:
+                # Cancelled, timed out, or the caller blew up: either way do
+                # not leave a Metashape process behind.
+                process.kill()
+                process.wait()
+                raise
 
         try:
             with open(out_path, "r", encoding="utf-8") as fh:
@@ -172,10 +204,15 @@ def probe_project(project_path: str, install=None,
             # No parsable result: the process died before it could write one.
             # Its console output is the only diagnostic we have, and the tail
             # holds the traceback.
-            tail = (completed.stdout or "").strip().splitlines()[-15:]
+            try:
+                with open(console_path, "r", encoding="utf-8",
+                          errors="replace") as fh:
+                    tail = fh.read().strip().splitlines()[-15:]
+            except OSError:
+                tail = []
             raise ProbeError(
                 "Could not read the project.\n\nMetashape exited with code {}."
-                "\n\n{}".format(completed.returncode, "\n".join(tail)))
+                "\n\n{}".format(process.returncode, "\n".join(tail)))
 
         if not data.get("ok"):
             raise ProbeError("Could not read the project:\n\n{}".format(
@@ -193,10 +230,11 @@ def probe_project(project_path: str, install=None,
     except OSError as exc:
         raise ProbeError("Could not start Metashape:\n{}".format(exc))
     finally:
-        try:
-            os.unlink(out_path)
-        except OSError:
-            pass
+        for leftover in (out_path, console_path):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
 
 
 def _no_window() -> dict:

@@ -105,9 +105,22 @@ class JobProcess(QtCore.QObject):
         if self.process.state() == QtCore.QProcess.NotRunning:
             return
         self.process.terminate()
-        if not self.process.waitForFinished(TERMINATE_GRACE_MS):
+        # Not waitForFinished: that blocks the window for the whole grace
+        # period (on Windows terminate() cannot reach a headless process at
+        # all, so it would always run the full wait) and re-enters the
+        # scheduler from inside this call. A timer escalates instead.
+        QtCore.QTimer.singleShot(TERMINATE_GRACE_MS, self._kill_if_running)
+
+    def _kill_if_running(self) -> None:
+        if self.process.state() != QtCore.QProcess.NotRunning:
             self.process.kill()
-            self.process.waitForFinished(TERMINATE_GRACE_MS)
+
+    def drain(self) -> None:
+        """Process any output still unread, including an unterminated last line."""
+        self._read_output()
+        if self._buffer:
+            self._buffer += "\n"
+            self._read_output_text("")
 
     def cleanup(self) -> dict:
         """Close the log, read the result file, and remove the temp files."""
@@ -165,7 +178,9 @@ class JobProcess(QtCore.QObject):
             text = bytes(data).decode("utf-8", errors="replace")
         except Exception:
             return
+        self._read_output_text(text)
 
+    def _read_output_text(self, text: str) -> None:
         # Hold back any trailing partial line: a protocol line split across
         # two reads would fail to parse and be lost.
         self._buffer += text
@@ -286,6 +301,21 @@ class Scheduler(QtCore.QObject):
         if not self._active:
             self._finish()
 
+    def kill_all(self) -> None:
+        """Stop every running job immediately and wait for the processes to go.
+
+        For shutdown only. Normal cancelling is asynchronous so the window
+        stays responsive, but closing the app must not leave Metashape
+        processes running on their own with nobody watching them.
+        """
+        self._stopping = True
+        self._queue.clear()
+        for job_process in list(self._active.values()):
+            job_process.cancelled = True
+            if job_process.process.state() != QtCore.QProcess.NotRunning:
+                job_process.process.kill()
+                job_process.process.waitForFinished(TERMINATE_GRACE_MS)
+
     def cancel_job(self, job_id: str) -> None:
         """Cancel one job, leaving the rest of the batch running."""
         job_process = self._active.get(job_id)
@@ -347,7 +377,14 @@ class Scheduler(QtCore.QObject):
                 jid, args[0] if args else 0))
         job_process.process.errorOccurred.connect(
             lambda err, jid=job.job_id: self._on_error(jid, err))
-        job_process.start()
+        try:
+            job_process.start()
+        except Exception as exc:
+            # Could not even set the job up (temp files, job serialisation).
+            # Without this the job would sit in _active as "running" forever.
+            job.message = "Could not start the job: {}".format(exc)
+            self._on_finished(job.job_id, 1)
+            return
         self.jobChanged.emit(job.job_id)
 
     def _on_error(self, job_id: str, error) -> None:
@@ -357,6 +394,10 @@ class Scheduler(QtCore.QObject):
             return
         job_process.job.message = (
             "Could not start Metashape at {}".format(self._install.executable))
+        # QProcess does not emit finished() when the program never started, so
+        # nothing else would ever close this job out -- it would show as
+        # running for ever and the batch would never end.
+        self._on_finished(job_id, 1)
 
     def _on_finished(self, job_id: str, exit_code: int) -> None:
         job_process = self._active.pop(job_id, None)
@@ -364,6 +405,7 @@ class Scheduler(QtCore.QObject):
             return
 
         job = job_process.job
+        job_process.drain()
         result = job_process.cleanup()
         job.finished_at = time.time()
         job.progress = 100.0 if exit_code == 0 else job.progress

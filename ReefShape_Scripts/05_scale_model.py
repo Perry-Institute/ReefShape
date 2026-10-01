@@ -10,7 +10,8 @@
 # target 7,target 8,0.4975,0.00025
 # target 9,target 10,0.4985,0.00025
 
-# PS: no additional spaces should be inserted
+# A header row, blank lines, and scalebars naming markers that are not in this
+# chunk are all tolerated (the last are skipped and listed in the console).
 
 
 # This script was based on a script for creating scalebars in Photoscan available at:
@@ -18,84 +19,50 @@
 #
 # updated May 2022 by Will Greene / Perry Institute for Marine Science and
 # Asif-ul Islam / Middlebury College for use with underwater photogrammetry
+#
+# The file handling now lives in reefshape_modules.reefshape_core.create_scalebars,
+# shared with the full workflow and the batch processor, so all three read a
+# scalebar file the same way.
 
-import Metashape, os
-from PySide2 import QtCore, QtGui
+import Metashape
+from reefshape_modules import reefshape_core
+
 
 def Create_Scalebars():
-   doc = Metashape.app.document
-   chunk = doc.chunk
+    try:
+        doc = Metashape.app.document
+        chunk = doc.chunk
+        if chunk is None:
+            Metashape.app.messageBox("There is no active chunk.")
+            return
+        if len(chunk.markers) == 0:
+            Metashape.app.messageBox(
+                "No markers found! Detect or place the scalebar targets first, "
+                "then create the scalebars.")
+            return
 
-   iNumScaleBars=len(chunk.scalebars)
-   iNumMarkers=len(chunk.markers)
-   # Check for existing markers
-   if (iNumMarkers == 0):
-      raise Exception("No markers found! Unable to create scalebars.") 
-   # Check for already existing scalebars
-   if (iNumScaleBars > 0):
-      print('There are already ',iNumScaleBars,' scalebars in this project.')
-   
-   path = Metashape.app.getOpenFileName("Select input text file:")
-   file = open(path, "rt")
-   eof = False
-   line = file.readline()
-   while not eof:
-      #split the line and load into variables
-      point1, point2, dist, acc = line.split(",")   
-      #find the corresponding scalebar, if there is any
-      scalebarfound=0
-      if (iNumScaleBars > 0):
-         for sbScaleBar in chunk.scalebars:
-            strScaleBarLabel_1=point1+"_"+point2
-            strScaleBarLabel_2=point2+"_"+point1
-            if sbScaleBar.label==strScaleBarLabel_1 or sbScaleBar.label==strScaleBarLabel_2:
-               # scalebar found
-               scalebarfound=1
-               # update it
-               sbScaleBar.reference.distance=float(dist)
-               sbScaleBar.reference.accuracy=float(acc)
-      # Check if scalebar was found
-      if (scalebarfound==0):
-         # Scalebar was not found: add a new one
-         # Find Marker 1 with label described by "point1"
-         bMarker1Found=0
-         for marker in chunk.markers:
-            if (marker.label == point1):
-               marker1 = marker
-               bMarker1Found=1
-               break
-         # Find Marker 2 with label described by "point2"
-         bMarker2Found=0
-         for marker in chunk.markers:
-            if (marker.label == point2):
-               marker2 = marker
-               bMarker2Found=1            
-               break
-         # Check if both markers were detected
-         if bMarker1Found==1 and bMarker2Found==1:
-            # Markers were detected. Create new scalebar.
-            sbScaleBar = chunk.addScalebar(marker1,marker2)
-            # update it:
-            sbScaleBar.reference.distance=float(dist)
-            sbScaleBar.reference.accuracy=float(acc)
-         else:
-            # Marker not found. Raise exception and print, but do not stop process.
-            if (bMarker1Found == 0):
-               print("Marker "+point1+" was not found!")
-            if (bMarker2Found == 0):
-               print("Marker "+point2+" was not found!")
-      #All done.      
-      #reading the next line in input file
-      line = file.readline()
-      if not len(line):
-         eof = True
-         break
- 
-   file.close()
-   chunk.updateTransform()
-   Metashape.app.update()
-   print("Script finished")
+        path = Metashape.app.getOpenFileName("Select input text file:")
+        if not path:
+            return                      # cancelled
+
+        before = len(chunk.scalebars)
+        error = reefshape_core.create_scalebars(chunk, path)
+        if error:
+            Metashape.app.messageBox(error)
+            return
+
+        chunk.updateTransform()
+        Metashape.app.update()
+        added = len(chunk.scalebars) - before
+        print("Script finished")
+        Metashape.app.messageBox(
+            "Scalebars updated: {} new, {} in total.\n\nTargets named in the "
+            "file but not found in this chunk were skipped; they are listed in "
+            "the console.".format(added, len(chunk.scalebars)))
+    except Exception as err:
+        Metashape.app.messageBox("Could not create the scalebars:\n\n{}".format(err))
+
+
 label = "ReefShape/Tools/Create Scalebars from Targets"
 Metashape.app.removeMenuItem(label)
 Metashape.app.addMenuItem(label, Create_Scalebars)
-

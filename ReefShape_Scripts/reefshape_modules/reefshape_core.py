@@ -38,7 +38,7 @@ works from the menu and dies in a batch.
 import csv
 import os
 import re
-import statistics
+import tempfile
 from datetime import datetime
 
 import Metashape
@@ -337,12 +337,26 @@ def create_scalebars(chunk, path):
 
     missing = []
     try:
-        with open(path) as handle:
-            for line in handle:
+        # utf-8-sig: a spreadsheet's "CSV UTF-8" export starts with a byte
+        # order mark that would otherwise end up in the first marker's name.
+        with open(path, encoding="utf-8-sig", errors="replace") as handle:
+            for number, line in enumerate(handle, 1):
                 if not line.strip():
                     continue
-                point1, point2, dist, acc = line.split(",")
-                point1, point2 = point1.strip(), point2.strip()
+                fields = [f.strip() for f in line.split(",")]
+                if len(fields) < 4:
+                    return ("Script error: scalebar file line {} does not "
+                            "have four comma-separated values "
+                            "(marker, marker, distance, accuracy)\n".format(number))
+                point1, point2, dist, acc = fields[:4]
+                try:
+                    dist_value, acc_value = float(dist), float(acc)
+                except ValueError:
+                    if number == 1:
+                        continue          # a header row
+                    return ("Script error: scalebar file line {} has a "
+                            "distance or accuracy that is not a "
+                            "number\n".format(number))
 
                 # Reuse an existing scalebar between the same pair if there is
                 # one, in either order, rather than adding a duplicate.
@@ -363,12 +377,15 @@ def create_scalebars(chunk, path):
                         continue
                     existing = chunk.addScalebar(marker1, marker2)
 
-                existing.reference.distance = float(dist)
-                existing.reference.accuracy = float(acc)
+                existing.reference.distance = dist_value
+                existing.reference.accuracy = acc_value
     except WorkflowError:
         raise
-    except Exception:
-        return "Script error: There was a problem reading scalebar data\n"
+    except OSError as exc:
+        return "Script error: could not read the scalebar file ({})\n".format(exc)
+    except Exception as exc:
+        return ("Script error: There was a problem reading scalebar data "
+                "({})\n".format(exc))
 
     if missing:
         print("Scalebar markers not found in this chunk (skipped): {}".format(
@@ -402,28 +419,43 @@ def reference_model(chunk, path, formatting):
     z_acc_col = formatting[6] - 1
     skip = formatting[7] - 1
 
-    new_path = path[:-4] + "_reformat.csv"
+    # The normalized copy goes in the system temp folder under a unique name.
+    # Next to the user's file it would fail on a read-only share, and two
+    # batch jobs pointing at the same georeferencing file would overwrite and
+    # delete each other's copy mid-import.
+    handle_fd, new_path = tempfile.mkstemp(suffix="_reformat.csv",
+                                           prefix="reefshape_")
+    os.close(handle_fd)
     try:
         rows = []
-        with open(path) as handle:
+        with open(path, encoding="utf-8-sig", errors="replace") as handle:
             for _ in range(skip):
                 handle.readline()
-            for line in handle:
+            for number, line in enumerate(handle, skip + 1):
                 if not line.strip():
                     continue
                 fields = line.strip().split(",")
-                row = [fields[label_col], fields[x_col], fields[y_col],
-                       fields[z_col], fields[x_acc_col], fields[y_acc_col],
-                       fields[z_acc_col]]
+                try:
+                    row = [fields[label_col], fields[x_col], fields[y_col],
+                           fields[z_col], fields[x_acc_col], fields[y_acc_col],
+                           fields[z_acc_col]]
+                except IndexError:
+                    return ("Script error: georeferencing file line {} has "
+                            "only {} columns, fewer than the column "
+                            "assignments need\n".format(number, len(fields)))
                 for item in row[1:]:
                     try:
                         float(item)
                     except ValueError:
-                        print("Script error: '{}' cannot be read as a coordinate "
-                              "value. Your column assignments may be incorrect."
-                              .format(item))
-                        raise
+                        return ("Script error: georeferencing file line {}: "
+                                "'{}' cannot be read as a number. Your column "
+                                "assignments may be incorrect.\n".format(
+                                    number, item))
                 rows.append(row)
+
+        if not rows:
+            return ("Script error: no georeferencing rows were found after "
+                    "row {}\n".format(skip))
 
         with open(new_path, "w", newline="") as handle:
             writer = csv.writer(handle)
@@ -435,12 +467,13 @@ def reference_model(chunk, path, formatting):
             columns="nxyzXYZ", skip_rows=skip, crs=chunk.crs,
             ignore_labels=False, create_markers=False, threshold=0.1,
             shutter_lag=0)
-    except Exception:
-        return "Script error: There was a problem reading georeferencing data\n"
+    except OSError as exc:
+        return "Script error: could not read the georeferencing file ({})\n".format(exc)
+    except Exception as exc:
+        return ("Script error: There was a problem reading georeferencing "
+                "data ({})\n".format(exc))
     finally:
-        # Always clean up the intermediate file, including on the error path,
-        # so a failed run doesn't litter the user's georeferencing folder with
-        # half-written _reformat.csv files that look like real inputs.
+        # Always clean up the intermediate file, including on the error path.
         try:
             os.remove(new_path)
         except OSError:
@@ -734,15 +767,14 @@ def referencing_problem(chunk, resolution, reporter):
     matched to the wrong target numbers, implying a plot kilometres across.
 
     `resolution` of 0 means Metashape picks the resolution from the data, so
-    it cannot be asked for something the machine has no memory for.
+    the extent check is skipped -- there is no resolution to size against. The
+    scale check is not: an unscaled chunk is just as unbuildable at the
+    default resolution, and default mode is where nothing else would catch it.
     """
-    if resolution <= 0:
-        return None
-
     if not chunk.transform or not chunk.transform.scale:
         return (
             "This chunk has no scale, so its coordinates are in arbitrary "
-            "units and a DEM at {} m resolution cannot be built. Alignment "
+            "units and the DEM and orthomosaic cannot be built. Alignment "
             "and the mesh are complete and have been saved.\n\n"
             "The chunk has {} marker(s) and {} scalebar(s). Scaling needs "
             "scalebars whose targets were actually detected in these photos, "
@@ -751,7 +783,10 @@ def referencing_problem(chunk, resolution, reporter):
             "marker detection found them.\n\n"
             "Add the scaling and georeferencing information, then re-run to "
             "continue from the DEM onwards."
-            .format(resolution, len(chunk.markers), len(chunk.scalebars)))
+            .format(len(chunk.markers), len(chunk.scalebars)))
+
+    if resolution <= 0:
+        return None
 
     estimate = estimate_raster_cells(chunk, resolution)
     if estimate is None:
@@ -871,7 +906,7 @@ def write_taglab_project(taglab_dir, project_name, chunk, ortho_path,
     """
     label = chunk.label or "timepoint"
     json_path = os.path.join(
-        taglab_dir, "{}_{}.json".format(project_name, label))
+        taglab_dir, safe_filename("{}_{}".format(project_name, label)) + ".json")
 
     width, height = read_tiff_size(ortho_path)
 
@@ -968,7 +1003,7 @@ def export_taglab_legacy_products(chunk, output_dir, project_name,
     os.makedirs(legacy_dir, exist_ok=True)
 
     resolution = ortho_resolution or chunk.orthomosaic.resolution
-    stem = "{}_{}".format(project_name, chunk.label)
+    stem = output_stem(project_name, chunk)
 
     common = dict(
         resolution=resolution, block_width=TAGLAB_LEGACY_BLOCK_PX,
@@ -1187,6 +1222,41 @@ def format_date_label(date_str):
         return date_str
 
 
+def safe_filename(text):
+    """`text` with the characters Windows will not take in a file name replaced.
+
+    Chunk labels are free text in Metashape, and "2026/05/22" or "Site: A"
+    would otherwise fail an export hours in.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(text)).strip().rstrip(".")
+    return cleaned or "unnamed"
+
+
+def output_stem(project_name, chunk):
+    """The `<project>_<chunk>` stem every export is named from."""
+    return safe_filename("{}_{}".format(project_name, chunk.label))
+
+
+def export_atomically(path, export):
+    """Run `export(partial_path)` and move the result to `path` only on success.
+
+    Exports are skipped on a re-run when their file already exists, which is
+    what makes the workflow resumable -- but a run killed part way through an
+    export leaves a truncated file that would then be skipped for good and
+    mistaken for a finished product. Writing to a side name and renaming
+    closes that gap. The side name keeps the extension, which is how
+    Metashape picks the format.
+    """
+    root, ext = os.path.splitext(path)
+    partial = root + ".partial" + ext
+    try:
+        os.remove(partial)
+    except OSError:
+        pass
+    export(partial)
+    os.replace(partial, path)
+
+
 def update_and_save(doc, reporter):
     reporter.info("Saving Project...")
     doc.save()
@@ -1220,6 +1290,25 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     reporter = reporter or Reporter()
     warnings = []
     outputs = []
+
+    # Fail now, in a sentence, rather than hours in or with a bare Metashape
+    # exception. Everything here is cheap to check and expensive to learn late.
+    if not doc.path:
+        raise WorkflowError("The project has not been saved. Save it first "
+                            "so the workflow has somewhere to keep its work.")
+    if len(chunk.cameras) == 0:
+        raise WorkflowError("The chunk has no photos. Add photos before "
+                            "running the workflow.")
+    if settings.georef_enabled and len(chunk.scalebars) == 0:
+        missing = [name for name, file in (
+            ("georeferencing file", settings.georef_path),
+            ("scalebar file", settings.scalebar_path))
+            if not file or not os.path.isfile(file)]
+        if missing:
+            raise WorkflowError(
+                "Georeferencing is turned on, but the {} was not found. "
+                "Choose the file(s), or turn georeferencing off to reference "
+                "the model by hand.".format(" and ".join(missing)))
 
     if settings.crs is not None:
         chunk.crs = settings.crs
@@ -1313,6 +1402,12 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                                reset_alignment=False, subdivide_task=True,
                                progress=reporter.progress_callback())
 
+            if not any(camera.transform for camera in chunk.cameras):
+                raise WorkflowError(
+                    "None of the photos could be aligned. Check that they "
+                    "overlap and are in focus (turning off generic "
+                    "preselection can help with heavy caustics), then try "
+                    "again.")
             reporter.info(" --- Cameras are aligned and sparse point cloud generated --- ")
             update_and_save(doc, reporter)
 
@@ -1522,7 +1617,14 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                                           "as the boundary source")
     else:
         reporter.step("Creating boundary from markers")
-        has_boundary = boundary_creation(chunk, reporter)
+        try:
+            has_boundary = boundary_creation(chunk, reporter)
+        except Exception as exc:
+            # Not worth losing a finished orthomosaic over: treat it like any
+            # other "no boundary from markers" and let the fallbacks run.
+            reporter.warn("Could not create a boundary from the markers: "
+                          "{}".format(exc))
+            has_boundary = False
         if has_boundary:
             reporter.info(" --- Boundary Polygon Created --- ")
         else:
@@ -1584,6 +1686,16 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                 "boundary, use Create Boundary from Markers or Create "
                 "Boundary from Photos, then re-run this workflow.")
 
+    if (settings.export_report or settings.export_gis or export_taglab
+            or export_taglab_legacy):
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except OSError as exc:
+            raise WorkflowError(
+                "The output folder could not be created or reached ({}): {}. "
+                "Everything up to here is saved; fix the location and run "
+                "again.".format(output_dir, exc))
+
     jpg = Metashape.ImageCompression()
     jpg.tiff_compression = Metashape.ImageCompression.TiffCompressionJPEG
     jpg.jpeg_quality = 90
@@ -1602,22 +1714,23 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
 
     if settings.export_report:
         report_path = os.path.join(
-            output_dir, "{}_{}.pdf".format(project_name, chunk.label))
+            output_dir, output_stem(project_name, chunk) + ".pdf")
         if not os.path.exists(report_path):
             reporter.step("Exporting report")
-            _export_report(chunk, report_path, project_name, reporter)
+            export_atomically(report_path, lambda target: _export_report(
+                chunk, target, project_name, reporter))
             outputs.append(report_path)
 
     if settings.export_gis:
         ortho_path = os.path.join(
-            output_dir, "{}_{}.tif".format(project_name, chunk.label))
+            output_dir, output_stem(project_name, chunk) + ".tif")
         dem_path = os.path.join(
-            output_dir, "{}_{}_DEM.tif".format(project_name, chunk.label))
+            output_dir, output_stem(project_name, chunk) + "_DEM.tif")
 
         if not os.path.exists(ortho_path):
             reporter.step("Exporting orthomosaic")
-            chunk.exportRaster(
-                path=ortho_path, resolution=ortho_res,
+            export_atomically(ortho_path, lambda target: chunk.exportRaster(
+                path=target, resolution=ortho_res,
                 source_data=Metashape.OrthomosaicData, split_in_blocks=False,
                 image_compression=jpg, save_kml=False, save_world=False,
                 save_scheme=False, save_alpha=True, image_description="",
@@ -1625,13 +1738,13 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                 max_zoom_level=-1, white_background=True, clip_to_boundary=False,
                 title="Orthomosaic",
                 description="Generated by Agisoft Metashape with ReefShape",
-                progress=reporter.progress_callback())
+                progress=reporter.progress_callback()))
         outputs.append(ortho_path)
 
         if not os.path.exists(dem_path):
             reporter.step("Exporting DEM")
-            chunk.exportRaster(
-                path=dem_path, resolution=dem_res, nodata_value=-5,
+            export_atomically(dem_path, lambda target: chunk.exportRaster(
+                path=target, resolution=dem_res, nodata_value=-5,
                 source_data=Metashape.ElevationData, split_in_blocks=False,
                 image_compression=lzw, save_kml=False, save_world=False,
                 save_scheme=False, save_alpha=True, image_description="",
@@ -1639,7 +1752,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                 max_zoom_level=-1, white_background=True, clip_to_boundary=False,
                 title="DEM",
                 description="Generated by Agisoft Metashape with ReefShape",
-                progress=reporter.progress_callback())
+                progress=reporter.progress_callback()))
         outputs.append(dem_path)
 
         # Shapefiles go in their own folder because the format is really five
@@ -1647,11 +1760,11 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         # produce an empty folder and a polygon-less shapefile.
         if has_boundary:
             shape_dir = os.path.join(
-                output_dir, "{}_{}_boundary".format(project_name, chunk.label))
+                output_dir, output_stem(project_name, chunk) + "_boundary")
             if not os.path.exists(shape_dir):
                 os.mkdir(shape_dir)
             shape_path = os.path.join(
-                shape_dir, "{}_{}_boundary.shp".format(project_name, chunk.label))
+                shape_dir, output_stem(project_name, chunk) + "_boundary.shp")
             reporter.step("Exporting boundary shapefile")
             chunk.exportShapes(
                 path=shape_path, save_points=False, save_polylines=False,
@@ -1671,7 +1784,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         # the size.
         reporter.step("Exporting TagLab orthomosaic")
         taglab_ortho = os.path.join(
-            taglab_dir, "{}_{}.tif".format(project_name, chunk.label))
+            taglab_dir, output_stem(project_name, chunk) + ".tif")
         chunk.exportRaster(
             path=taglab_ortho, resolution=ortho_res,
             source_data=Metashape.OrthomosaicData, split_in_blocks=False,
@@ -1692,7 +1805,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         # step. Passing ortho_res here would have undone it.
         reporter.step("Exporting TagLab DEM")
         taglab_dem = os.path.join(
-            taglab_dir, "{}_{}_DEM.tif".format(project_name, chunk.label))
+            taglab_dir, output_stem(project_name, chunk) + "_DEM.tif")
         chunk.exportRaster(
             path=taglab_dem, resolution=dem_res, nodata_value=-5,
             source_data=Metashape.ElevationData, split_in_blocks=False,

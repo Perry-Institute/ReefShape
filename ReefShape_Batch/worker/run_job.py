@@ -178,14 +178,52 @@ def prepare_chunk(doc, job, reporter):
                 reporter.info("Continuing existing chunk {!r}".format(wanted))
                 return chunk
 
+    if kind == "rephoto" and not wanted:
+        # Auto-named chunk: its label came from the photos' capture date, so
+        # there is no name to look for on a resume. Recognise it by the photos
+        # it holds instead, or every retry would start another empty chunk.
+        existing = _chunk_holding_photos(
+            doc, job.get("photo_folders") or [],
+            exclude_label=job.get("reference_chunk", ""))
+        if existing is not None:
+            reporter.info("Continuing existing chunk {!r} (holds this job's "
+                          "photos)".format(existing.label))
+            return existing
+
     if kind == "rephoto":
         chunk = doc.addChunk()
+    elif wanted:
+        # A named chunk that is not in the project. Take over an empty
+        # placeholder (what an interrupted first run leaves behind), but never
+        # a chunk that already holds another timepoint's photos -- relabelling
+        # that would silently rename someone else's data.
+        chunk = next((c for c in doc.chunks if len(c.cameras) == 0), None)
+        if chunk is None:
+            chunk = doc.addChunk()
     else:
         chunk = doc.chunks[0] if doc.chunks else doc.addChunk()
 
     if wanted:
         chunk.label = wanted
     return chunk
+
+
+def _chunk_holding_photos(doc, folders, exclude_label=""):
+    """A chunk whose photos came from one of `folders`, other than the reference."""
+    wanted = {os.path.normcase(os.path.abspath(f)) for f in folders}
+    if not wanted:
+        return None
+    for chunk in doc.chunks:
+        if chunk.label == exclude_label:
+            continue
+        for camera in chunk.cameras:
+            if camera.photo and camera.photo.path:
+                folder = os.path.normcase(os.path.abspath(
+                    os.path.dirname(camera.photo.path)))
+                if folder in wanted:
+                    return chunk
+                break          # one camera is enough to tell where it came from
+    return None
 
 
 def add_photos(chunk, job, reporter):

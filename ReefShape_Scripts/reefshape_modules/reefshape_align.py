@@ -25,6 +25,7 @@ globals and the headless runner does not.
 
 import csv
 import os
+import tempfile
 
 import Metashape
 
@@ -263,9 +264,14 @@ def align_timepoints(doc, reference_chunk, chunk, target_type,
             "The reference chunk {!r} has no markers, so there is nothing to "
             "align the new timepoint to.".format(reference_chunk.label))
 
-    project_folder = os.path.dirname(doc.path or "")
-    est_ref_path = os.path.join(
-        project_folder, reference_chunk.label + "_est_ref.csv")
+    # In the system temp folder under a unique name, not beside the project
+    # named for the chunk: several projects can share a folder and a reference
+    # chunk label (a batch writing all its projects to one place), and jobs
+    # that run at once would otherwise overwrite and delete each other's file.
+    # A label with a "/" or ":" in it would not make a valid file name anyway.
+    handle_fd, est_ref_path = tempfile.mkstemp(prefix="reefshape_ref_",
+                                               suffix="_est_ref.csv")
+    os.close(handle_fd)
 
     try:
         reporter.step("Exporting estimated reference from {!r}".format(

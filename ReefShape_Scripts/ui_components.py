@@ -288,11 +288,16 @@ class AddPhotosGroupBox(CollapsibleGroupBox):
             # add photos to active chunk
             self.photo_folder = new_folder
             try:
-                image_list = os.listdir(self.photo_folder)
+                image_list = sorted(os.listdir(self.photo_folder))
                 photo_list = list()
                 for photo in image_list:
-                    if photo.rsplit(".",1)[1].lower() in  ["jpg", "jpeg", "tif", "tiff"]:
+                    # splitext, not rsplit: a file or folder with no dot in its
+                    # name (README, a subfolder) has no extension to index.
+                    if os.path.splitext(photo)[1].lower() in (".jpg", ".jpeg", ".tif", ".tiff"):
                         photo_list.append(os.path.join(self.photo_folder, photo))
+                if not photo_list:
+                    Metashape.app.messageBox("No photos (.jpg, .jpeg, .tif, .tiff) were found in that folder.")
+                    return
                 Metashape.app.document.chunk.addPhotos(photo_list)
                 self.txtAddPhotos.setPlainText(self.photo_folder)
                 self.labelPhotosAdded.setText(str(len(Metashape.app.document.chunk.cameras)) + " images successfully added. Select another folder if you would like to add more")
@@ -300,10 +305,12 @@ class AddPhotosGroupBox(CollapsibleGroupBox):
                 Metashape.app.messageBox("Error adding photos")
                 return
         else:
-            Metashape.app.messageBox("Unable to add photos: please select a folder to add photos from")
+            # Cancelled the folder dialog. Nothing was added, so there is
+            # nothing below to do (and photo_list does not exist).
+            return
 
         # After adding photos, attempt to auto-rename chunk if default name
-        if self.parent.chunk.label.startswith("Chunk"):
+        if Metashape.app.document.chunk.label.startswith("Chunk"):
 
             # Create a deep copy of photo_list to ensure it's captured correctly inside the delayed function
             captured_photo_list = list(photo_list)
@@ -354,10 +361,20 @@ class AddPhotosGroupBox(CollapsibleGroupBox):
         if(self.checkNaming(new_name) and new_name):
             self.project_name = new_name
             self.project_path = project_path
-            self.parent.doc = Metashape.Document()
-            self.parent.doc.addChunk()
-            self.parent.doc.save(path = self.project_path)
+            new_doc = Metashape.Document()
+            new_doc.addChunk()
+            new_doc.save(path = self.project_path)
             Metashape.app.document.open(path = self.project_path)
+            # Everything downstream must work on the document Metashape has
+            # open, not the scratch one used to create the file. Saving the
+            # scratch document later would overwrite the project with an
+            # empty chunk.
+            self.parent.doc = Metashape.app.document
+            self.parent.chunk = Metashape.app.document.chunk
+            self.parent.project_folder = os.path.dirname(self.project_path)
+            self.parent.project_name = new_name
+            self.chunk_name = Metashape.app.document.chunk.label
+            self.txtChunkName.setPlainText(self.chunk_name)
             self.txtAddPhotos.setPlainText("No folder selected")
             self.labelPhotosAdded.setText("")
         elif(not self.checkNaming(new_name)):
@@ -641,17 +658,21 @@ class GeoreferenceGroupBox(CollapsibleGroupBox):
     def getScaleFile(self):
         # maybe change this to local variable and get text value from text box directly when workflow is run?
         # might be better to connect textchanged() signal to a custom function, but more work
-        self.scalebars_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.parent.project_folder, "CSV files (*.csv *.txt)")[0]
-        if(self.scalebars_path):
+        # Cancelling keeps whatever was chosen before (including a path
+        # restored from the last session) rather than blanking it.
+        chosen = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.parent.project_folder, "CSV files (*.csv *.txt)")[0]
+        if(chosen):
+            self.scalebars_path = chosen
             self.txtScaleFile.setPlainText(self.scalebars_path)
-        else:
+        elif(not self.scalebars_path):
             self.txtScaleFile.setPlainText("No File Selected")
 
     def getGeoFile(self):
-        self.georef_path = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.parent.project_folder, "CSV files (*.csv *.txt)")[0]
-        if(self.georef_path):
+        chosen = QtWidgets.QFileDialog.getOpenFileName(self, 'Open file', self.parent.project_folder, "CSV files (*.csv *.txt)")[0]
+        if(chosen):
+            self.georef_path = chosen
             self.txtGeoFile.setPlainText(self.georef_path)
-        else:
+        elif(not self.georef_path):
             self.txtGeoFile.setPlainText("No File Selected")
 
     def onReferenceChanged(self):

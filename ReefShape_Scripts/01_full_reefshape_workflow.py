@@ -763,7 +763,20 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         '''
         print("Script started...")
         self.setEnabled(False)
-        self.chunk = Metashape.app.document.chunk
+        # Always the document and chunk Metashape has open now: either may
+        # have been replaced since the dialog was built (Create New, or the
+        # user switching chunks behind the dialog).
+        self.doc = Metashape.app.document
+        self.chunk = self.doc.chunk
+        if not self.doc.path:
+            Metashape.app.messageBox(
+                "This project has not been saved yet. Use Create New or "
+                "Save Project in the Project Setup panel (or save it from "
+                "Metashape) before running the workflow.")
+            self.setEnabled(True)
+            return
+        self.project_folder = path.dirname(self.doc.path)
+        self.project_name = path.splitext(path.basename(self.doc.path))[0]
 
         settings = self.buildWorkflowSettings()
 

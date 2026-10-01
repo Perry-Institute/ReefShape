@@ -439,14 +439,26 @@ class Job:
         """
         import copy
         georef_path = self.georef.georef_path
+        georef_enabled = self.georef.enabled
         self.processing = copy.deepcopy(template.processing)
         self.export = copy.deepcopy(template.export)
         self.georef = copy.deepcopy(template.georef)
         self.resources = copy.deepcopy(template.resources)
-        self.icp = copy.deepcopy(template.icp)
         self.template_name = template.name
         if keep_paths and georef_path:
             self.georef.georef_path = georef_path
+
+        # Per-plot decisions a survey-wide template must not override.
+        #
+        # ICP is chosen plot by plot, for the plots that have no permanent
+        # markers, so it is left as the job has it.
+        #
+        # For a revisit, whether the workflow detects and references markers
+        # follows from whether ICP is on, not from the survey default. Turning
+        # it on for a marker-aligned revisit would make the workflow try to
+        # re-reference a chunk that already inherited its referencing.
+        if self.kind == REPHOTO:
+            self.georef.enabled = georef_enabled
 
     # -- serialization --
 
@@ -551,6 +563,12 @@ def validate_job(job: Job) -> List[Issue]:
     if job.kind == REPHOTO:
         if not job.reference_chunk:
             err("No reference chunk selected for re-photography.")
+        elif job.chunk_name and job.chunk_name == job.reference_chunk:
+            # The worker reuses a chunk of the requested name, so this would
+            # run the whole workflow over the reference chunk itself.
+            err("The new chunk name is the same as the reference chunk "
+                "({!r}). Give the new timepoint its own name.".format(
+                    job.chunk_name))
 
         # Only meaningful when the user has overridden the defaults; an empty
         # list means "use the reference chunk's enabled flags", which the

@@ -338,7 +338,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 "<li>{}: {}</li>".format(i.severity, i.message) for i in issues)))
         if job.log_path:
             parts.append("<p><b>Log:</b> {}</p>".format(job.log_path))
+        # The running job refreshes this every second; keep the reader's
+        # place rather than snapping back to the top each time.
+        bar = self.detail_view.verticalScrollBar()
+        position = bar.value()
         self.detail_view.setHtml("".join(parts))
+        bar.setValue(position)
 
     def _refresh_log(self):
         """Tail the selected job's log file.
@@ -531,8 +536,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # A re-run should redo the jobs that did not finish, not the ones that
         # did -- reset only the non-successful ones.
+        # A job that stopped for referencing is waiting on the user; once they
+        # have added it, running again picks up from the DEM. If they have not,
+        # it stops again at the same cheap check.
         for job in self.batch.jobs:
-            if job.status in (models.FAILED, models.CANCELLED):
+            if job.status in (models.FAILED, models.CANCELLED,
+                              models.NEEDS_REFERENCING):
                 job.reset_for_run()
 
         self.scheduler.start(self.batch.jobs,
@@ -636,6 +645,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._load_batch(path)
 
     def _load_batch(self, path):
+        if self.scheduler.is_running():
+            QtWidgets.QMessageBox.information(
+                self, "Batch is running",
+                "Stop the running batch before opening another one.")
+            return
         try:
             batch = Batch.load(path)
         except store.NewerSchemaWarning as warning:
@@ -644,7 +658,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
             if reply != QtWidgets.QMessageBox.Yes:
                 return
-            batch = warning.load_anyway()
+            try:
+                batch = warning.load_anyway()
+            except store.BatchFileError as exc:
+                QtWidgets.QMessageBox.warning(self, "Could not open batch", str(exc))
+                return
         except store.BatchFileError as exc:
             QtWidgets.QMessageBox.warning(self, "Could not open batch", str(exc))
             return
@@ -703,7 +721,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if reply != QtWidgets.QMessageBox.Yes:
                 event.ignore()
                 return
-            self.scheduler.stop(cancel_running=True)
+            self.scheduler.kill_all()
 
         if self.batch.is_dirty() and self.batch.jobs:
             reply = QtWidgets.QMessageBox.question(

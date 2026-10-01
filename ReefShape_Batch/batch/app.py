@@ -137,6 +137,54 @@ def _run_check():
     return 0 if ok else 1
 
 
+_reporting_error = False
+
+
+def _install_excepthook():
+    """Show, and log, any exception that escapes a slot.
+
+    The launchers run without a console, so an unhandled exception in a button
+    handler otherwise vanishes: the click does nothing and there is nothing to
+    report. Showing it, and keeping a copy beside the config, turns "it just
+    stopped working" into something that can be diagnosed.
+    """
+    def hook(exc_type, exc, tb):
+        global _reporting_error
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        try:
+            sys.stderr.write(text)
+        except Exception:
+            pass
+        try:
+            log = metashape_locate.config_dir() / "errors.log"
+            with open(str(log), "a", encoding="utf-8") as fh:
+                fh.write("\n--- {} ---\n{}".format(
+                    __import__("time").strftime("%Y-%m-%d %H:%M:%S"), text))
+        except Exception:
+            pass
+        # One dialog at a time: a handler that fails on every repaint would
+        # otherwise stack boxes faster than they can be closed.
+        if _reporting_error:
+            return
+        _reporting_error = True
+        try:
+            box = QtWidgets.QMessageBox()
+            box.setIcon(QtWidgets.QMessageBox.Warning)
+            box.setWindowTitle(APP_NAME)
+            box.setText("Something went wrong: {}".format(exc))
+            box.setInformativeText(
+                "The batch and any running jobs are unaffected. If this keeps "
+                "happening, send the details below.")
+            box.setDetailedText(text)
+            exec_(box)
+        except Exception:
+            pass
+        finally:
+            _reporting_error = False
+
+    sys.excepthook = hook
+
+
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
 
@@ -147,6 +195,7 @@ def main(argv=None):
     app = QtWidgets.QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ReefShape")
+    _install_excepthook()
 
     install = ensure_install()
     if install is None:

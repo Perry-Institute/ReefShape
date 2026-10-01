@@ -884,6 +884,17 @@ class ICPAlignChunksDlg(QtWidgets.QDialog):
         self._refresh_sources(self.cmbMaster, self.cmbMasterSrc, "_master_sources")
 
     def align(self):
+        """OK-button slot. Reports any failure in a message box: an exception
+        escaping a Qt slot only reaches the console, which most users never
+        see, so the dialog would appear to do nothing."""
+        try:
+            self._align_impl()
+        except Exception as err:
+            import traceback
+            traceback.print_exc()
+            QtWidgets.QMessageBox.critical(self, "Alignment Error", str(err))
+
+    def _align_impl(self):
         print("Script started...")
 
         moving_idx = self.cmbMoving.currentIndex()

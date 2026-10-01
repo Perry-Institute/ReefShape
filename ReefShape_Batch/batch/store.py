@@ -159,6 +159,14 @@ class Batch:
         batch.parallelism = max(1, min(8, int(data.get("parallelism", 1) or 1)))
         batch.stop_on_error = bool(data.get("stop_on_error", False))
         batch.jobs = [Job.from_dict(d) for d in data.get("jobs", [])]
+        for job in batch.jobs:
+            # A job saved as running was running when the app died: no process
+            # exists for it now. Left as "running" it would never be queued
+            # again; put it back in the queue, where the workflow's stage
+            # guards resume it from the last saved stage.
+            if job.status == models.RUNNING:
+                job.reset_for_run()
+                job.message = "Interrupted -- will resume"
         batch._dirty = False
         return batch
 
@@ -200,7 +208,12 @@ class Batch:
             # but the caller needs to be able to tell the user.
             raise NewerSchemaWarning(data, path, version)
 
-        return cls.from_dict(data, path)
+        try:
+            return cls.from_dict(data, path)
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise BatchFileError(
+                "{} could not be read ({}). It may have been edited by hand "
+                "or damaged.".format(path, exc))
 
 
 class NewerSchemaWarning(Exception):
@@ -221,7 +234,11 @@ class NewerSchemaWarning(Exception):
         self.version = version
 
     def load_anyway(self) -> Batch:
-        return Batch.from_dict(self.data, self.path)
+        try:
+            return Batch.from_dict(self.data, self.path)
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            raise BatchFileError(
+                "{} could not be read ({}).".format(self.path, exc))
 
 
 def _atomic_write_json(path: str, data: Any) -> None:

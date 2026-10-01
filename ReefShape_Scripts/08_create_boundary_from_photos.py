@@ -131,6 +131,17 @@ class PhotoBoundaryDlg(QtWidgets.QDialog):
         self.btnCancel.clicked.connect(self.reject)
 
     def _on_create(self):
+        """Run the creation, reporting any failure in a message box rather than
+        letting it escape the Qt slot, where it would only reach the console."""
+        try:
+            self._create()
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            Metashape.app.messageBox(
+                "Could not create the boundary:\n\n{}".format(exc))
+
+    def _create(self):
         if not self.chunk:
             Metashape.app.messageBox("No active chunk.")
             return

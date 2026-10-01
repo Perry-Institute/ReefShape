@@ -488,7 +488,12 @@ class CreateBoundaryDlg(QtWidgets.QDialog):
             return
 
         Metashape.app.update()
-        self.doc.save()
+        try:
+            self.doc.save()
+        except Exception as err:
+            # Unsaved project, or a read-only one. The boundary exists in the
+            # open project either way, so do not turn that into a failure.
+            print("Boundary created but the project could not be saved: {}".format(err))
         print("Boundary created from {} markers: {}".format(
             len(self.order), ", ".join(m.label for m in self.order)))
         self.accept()

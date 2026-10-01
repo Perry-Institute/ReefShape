@@ -996,18 +996,36 @@ class JobEditor(QtWidgets.QDialog):
             return
 
         self.ref_detail.setText("Reading project...")
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-        QtWidgets.QApplication.processEvents()
+
+        # Starting Metashape and opening a large project can take a while, and
+        # on a slow drive a long while. A modal progress box keeps the window
+        # repainting and gives a way out; being modal also stops clicks
+        # reaching the editor while the event loop is turning underneath it.
+        progress = QtWidgets.QProgressDialog(
+            "Reading the project with Metashape...", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Reading project")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(400)
+
+        def pump():
+            QtWidgets.QApplication.processEvents()
+            return progress.wasCanceled()
+
         try:
-            self._project_info = probe.probe_project(path, use_cache=not force)
+            self._project_info = probe.probe_project(
+                path, use_cache=not force, pump=pump)
+        except probe.ProbeCancelled:
+            self._project_info = None
+            self.ref_detail.setText("Project not read (cancelled).")
+            return
         except probe.ProbeError as exc:
             self._project_info = None
             self.ref_detail.setText("")
-            QtWidgets.QApplication.restoreOverrideCursor()
+            progress.close()
             QtWidgets.QMessageBox.warning(self, "Could not read project", str(exc))
             return
         finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
+            progress.close()
 
         self.ref_combo.blockSignals(True)
         self.ref_combo.clear()
@@ -1062,6 +1080,18 @@ def _source_index(value):
 
 
 def edit_job(job: Job, parent=None) -> bool:
-    """Show the editor for `job`. Returns True if the user accepted."""
-    editor = JobEditor(job, parent)
-    return exec_(editor) == QtWidgets.QDialog.Accepted
+    """Show the editor for `job`. Returns True if the user accepted.
+
+    The editor writes every change into the job it is given as the user makes
+    it (that is how live validation works), so it is handed a copy. Cancel then
+    simply drops the copy; only OK copies the edits back onto the real job.
+    """
+    import copy
+    from dataclasses import fields
+    working = copy.deepcopy(job)
+    editor = JobEditor(working, parent)
+    if exec_(editor) != QtWidgets.QDialog.Accepted:
+        return False
+    for f in fields(Job):
+        setattr(job, f.name, getattr(working, f.name))
+    return True
