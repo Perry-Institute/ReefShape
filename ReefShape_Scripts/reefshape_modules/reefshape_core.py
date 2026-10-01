@@ -61,17 +61,10 @@ DEM_RESAMPLE_FACTOR = 4
 
 # Default-resolution mode has no ratio to work from: the stored DEM is whatever
 # Metashape picks for the mesh. A DEM still within this multiple of the
-# orthomosaic's pixel size was built to feed the orthomosaic and has not been
-# shrunk yet; the default for a mesh is several times coarser than that.
+# orthomosaic's pixel size is a leftover (from a run with an explicit
+# resolution) and has not been shrunk; the default for a mesh is several times
+# coarser than that.
 DEFAULT_MODE_UNSHRUNK_FACTOR = 2.0
-
-# In default mode the DEM is built at an estimate of the orthomosaic's pixel
-# size, scaled by this so it errs fine rather than coarse -- a finer DEM only
-# costs time, a coarser one costs ortho quality. It is deleted afterwards.
-DEFAULT_MODE_DEM_MARGIN = 0.8
-# How much coarser than the real orthomosaic the DEM may turn out before the
-# run warns about it.
-DEFAULT_MODE_DEM_TOLERANCE = 1.25
 
 # Where the plot boundary comes from.
 #
@@ -1017,55 +1010,6 @@ PHOTO_BOUNDARY_PROMPT = (
     "fix the boundary and run the workflow again to finish.")
 
 
-def estimate_default_ortho_resolution(chunk):
-    """Estimate the pixel size Metashape will pick for the orthomosaic.
-
-    Returns metres per pixel, or None if it cannot be worked out.
-
-    Needed because the DEM an orthomosaic is built over should be at least as
-    fine as the orthomosaic, and with the default resolution Metashape does not
-    choose the orthomosaic's pixel size until it builds it -- by which point
-    the DEM already exists. There is no API to ask in advance.
-
-    The default is the ground sampling distance of the images: how much
-    seafloor one pixel covers, which is the camera's height above the surface
-    divided by its focal length in pixels. Both are known once the cameras are
-    aligned. Height is the vertical offset between the cameras and the median
-    tie point; it is in chunk units, so transform.scale converts it to metres.
-    The median over cameras keeps a few strays from moving the answer.
-
-    Assumes the chunk's Z axis is roughly vertical, which holds for the usual
-    downward-looking reef survey. Anything it cannot work out returns None and
-    the caller falls back to letting Metashape choose.
-    """
-    try:
-        scale = chunk.transform.scale
-        points = chunk.tie_points.points if chunk.tie_points else None
-        if not scale or not points:
-            return None
-
-        step = max(1, len(points) // 2000)
-        heights = [points[i].coord.z for i in range(0, len(points), step)
-                   if points[i].valid]
-        if not heights:
-            return None
-        floor_z = statistics.median(heights)
-
-        sizes = []
-        for camera in chunk.cameras:
-            if camera.transform is None or camera.center is None:
-                continue
-            calibration = camera.sensor.calibration if camera.sensor else None
-            if calibration is None or calibration.f <= 0:
-                continue
-            height = abs(camera.center.z - floor_z) * scale
-            if height > 0:
-                sizes.append(height / calibration.f)
-        return statistics.median(sizes) if sizes else None
-    except Exception:
-        return None
-
-
 def storage_dem_resolution(chunk):
     """The resolution the DEM is kept at once the orthomosaic exists."""
     return chunk.orthomosaic.resolution * DEM_RESAMPLE_FACTOR
@@ -1116,8 +1060,8 @@ def _resample_prompt(chunk, current, target):
     if target is None:
         return (
             "This chunk's DEM is at {cur:.4f} m, close to the orthomosaic's "
-            "{ortho:.4f} m. A DEM that fine is only needed while the "
-            "orthomosaic is being built. The resolution is set to Metashape's "
+            "{ortho:.4f} m, so it looks like a leftover from a run with a "
+            "custom resolution. The resolution is now set to Metashape's "
             "default, so it would be replaced by the DEM resolution Metashape "
             "picks for this mesh, which is much coarser.{size}"
             "\n\n"
@@ -1486,41 +1430,18 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         on_mesh_complete(chunk)
         update_and_save(doc, reporter)
 
-    if chunk.elevation is None:
-        # The orthomosaic is built over this DEM, so it has to be at least as
-        # fine as the orthomosaic or the ortho is resampled from a coarser
-        # surface. With an explicit resolution that is simply the ortho's. With
-        # the default Metashape has not chosen one yet and a DEM at resolution 0
-        # would be several times coarser than it, so estimate the orthomosaic's
-        # pixel size from the images and build the DEM there. It is replaced
-        # with Metashape's own default for the mesh once the ortho is done.
-        dem_first_res = ortho_res
-        if default_mode:
-            estimate = estimate_default_ortho_resolution(chunk)
-            if estimate:
-                dem_first_res = estimate * DEFAULT_MODE_DEM_MARGIN
-                reporter.info(
-                    "  default resolution: building the DEM at {:.4f} m to "
-                    "match the orthomosaic Metashape will choose (estimated "
-                    "{:.4f} m from the camera height and focal length)".format(
-                        dem_first_res, estimate))
-            else:
-                reporter.info(
-                    "  default resolution: could not estimate the "
-                    "orthomosaic's pixel size, so Metashape will choose the "
-                    "DEM resolution too")
+    def build_dem(resolution):
         reporter.step("Building DEM")
         chunk.buildDem(source_data=Metashape.ModelData,
                        interpolation=Metashape.EnabledInterpolation,
-                       resolution=dem_first_res, subdivide_task=True,
+                       resolution=resolution, subdivide_task=True,
                        workitem_size_tiles=10, max_workgroup_size=100,
                        progress=reporter.progress_callback())
-        reporter.info(" --- Hi-Res DEM Built --- ")
 
-    if chunk.orthomosaic is None:
+    def build_ortho(surface):
         reporter.step("Building orthomosaic")
         chunk.buildOrthomosaic(
-            resolution=ortho_res, surface_data=Metashape.ElevationData,
+            resolution=ortho_res, surface_data=surface,
             blending_mode=Metashape.MosaicBlending, fill_holes=True,
             ghosting_filter=False, cull_faces=False, refine_seamlines=False,
             subdivide_task=True, workitem_size_cameras=20,
@@ -1529,18 +1450,31 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
         reporter.info(" --- Orthomosaic Built --- ")
         update_and_save(doc, reporter)
 
-        # The DEM was sized from an estimate, so check it really is at least as
-        # fine as the orthomosaic Metashape then chose. Close is fine; much
-        # coarser means the ortho was resampled from a coarser surface.
-        if (default_mode and chunk.elevation is not None
-                and chunk.elevation.resolution
-                > chunk.orthomosaic.resolution * DEFAULT_MODE_DEM_TOLERANCE):
-            warnings.append(
-                "The orthomosaic was built at {:.4f} m, finer than the "
-                "{:.4f} m DEM it was built over (the pixel size had to be "
-                "estimated in advance). It may show resampling artifacts; "
-                "set the resolution explicitly to avoid this.".format(
-                    chunk.orthomosaic.resolution, chunk.elevation.resolution))
+    if default_mode:
+        # Metashape derives the two defaults from different things: the
+        # orthomosaic's from the flight height and image resolution, the DEM's
+        # from the mesh's vertex density. Built over a DEM, though, the default
+        # orthomosaic takes a quarter of the DEM's cell size instead (measured:
+        # 0.125 mm over a 0.5 mm DEM, 1.045 mm over a 4.18 mm one), so building
+        # the DEM first would decide the orthomosaic's resolution by accident.
+        # Build the orthomosaic from the mesh itself and the DEM afterwards, so
+        # each gets its own default. Slower than going through a DEM, but it
+        # needs no estimate and no second DEM build.
+        if chunk.orthomosaic is None:
+            build_ortho(Metashape.ModelData)
+        if chunk.elevation is None:
+            build_dem(0)
+            reporter.info(" --- DEM Built --- ")
+    else:
+        # The orthomosaic is built over this DEM, so it has to be at least as
+        # fine as the orthomosaic or the ortho is resampled from a coarser
+        # surface. It is replaced with a coarser one below, once the
+        # orthomosaic no longer needs it.
+        if chunk.elevation is None:
+            build_dem(ortho_res)
+            reporter.info(" --- Hi-Res DEM Built --- ")
+        if chunk.orthomosaic is None:
+            build_ortho(Metashape.ElevationData)
 
     # Runs whenever an orthomosaic exists, not only on the pass that built it.
     # A run that died between the ortho and this step would otherwise resume

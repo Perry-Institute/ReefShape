@@ -186,7 +186,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
 
         # set orthomosaic resolution
         self.checkBoxDefaultRes = QtWidgets.QCheckBox("Use default resolution")
-        self.checkBoxDefaultRes.setToolTip("Let Metashape choose the orthomosaic's resolution, from the ground sampling distance of the images.\n\nThe DEM is first built at a matching resolution, so the orthomosaic is not resampled from a coarser surface, and is replaced at the end by the DEM resolution Metashape picks for the mesh, which is much coarser.\n\nWith a custom resolution the stored DEM is instead four times the orthomosaic's pixel size.")
+        self.checkBoxDefaultRes.setToolTip("Let Metashape choose the resolutions. The orthomosaic's comes from the flight height and image resolution, and the DEM's from the density of the mesh.\n\nThe orthomosaic is built straight from the mesh, then the DEM, so each gets its own default. This is slower than building the orthomosaic over a DEM.\n\nWith a custom resolution the DEM is built first and then stored at four times the orthomosaic's pixel size.")
         self.labelCustomRes = QtWidgets.QLabel("Custom Resolution (m): ")
         self.spinboxCustomRes = QtWidgets.QDoubleSpinBox()
         self.spinboxCustomRes.setDecimals(5)
