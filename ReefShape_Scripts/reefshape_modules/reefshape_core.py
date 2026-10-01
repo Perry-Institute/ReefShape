@@ -79,6 +79,9 @@ BOUNDARY_SOURCES = [
 # Outcomes of run_workflow.
 COMPLETED = "completed"
 STOPPED_FOR_MANUAL_REFERENCING = "stopped_for_manual_referencing"
+# The user declined to carry on with a photo-coverage boundary. Everything
+# built so far is saved, so a re-run resumes at the boundary.
+STOPPED_FOR_BOUNDARY = "stopped_for_boundary"
 
 
 class WorkflowError(Exception):
@@ -122,6 +125,17 @@ class Reporter:
     def warn(self, message):
         """Something was skipped or degraded. Collected and surfaced at the end."""
         print("WARNING: {}".format(message))
+
+    def confirm(self, title, message):
+        """Ask an OK/Cancel question. Returns True for OK.
+
+        Non-interactive by default: with nobody to ask (the batch worker runs
+        under `metashape.exe -r`) it logs the question and answers OK, so an
+        unattended run carries on exactly as it did before the question
+        existed. The menu dialog overrides this to show a real prompt.
+        """
+        print("{}: continuing without asking (non-interactive run).".format(title))
+        return True
 
     def progress_callback(self):
         """A callable suitable for Metashape's `progress=` keyword.
@@ -972,9 +986,66 @@ def export_taglab_legacy_products(chunk, output_dir, project_name,
     return legacy_dir
 
 
+PHOTO_BOUNDARY_PROMPT = (
+    "This chunk has no plot boundary, and one could not be built from corner "
+    "markers. The legacy TagLab outputs need one, so the workflow will fall "
+    "back to a boundary drawn from photo coverage.\n\n"
+    "A photo-coverage boundary follows where the photographer swam, so it will "
+    "not match the boundary of other timepoints, and the TagLab exports will "
+    "not line up properly with earlier ones.\n\n"
+    "If this is a repeat visit, first check that the orthomosaic aligns with "
+    "the previous timepoint, then use the Copy Boundary tool "
+    "(ReefShape > Tools > Copy Boundary) to bring the boundary across from the "
+    "earlier chunk.\n\n"
+    "Click OK to carry on with a photo-coverage boundary anyway.\n"
+    "Click Cancel to stop here. Everything built so far is saved, so you can "
+    "fix the boundary and run the workflow again to finish.")
+
+
 def storage_dem_resolution(chunk):
     """The resolution the DEM is kept at once the orthomosaic exists."""
     return chunk.orthomosaic.resolution * DEM_RESAMPLE_FACTOR
+
+
+def dem_shrink_plan(chunk):
+    """(active DEM, target resolution) if the DEM should be shrunk, else None.
+
+    True only when an orthomosaic exists and the active DEM is finer than the
+    storage resolution. Shared by the up-front question and the step that acts
+    on the answer, so the two cannot disagree about whether there is anything
+    to ask.
+    """
+    if chunk.orthomosaic is None or chunk.elevation is None:
+        return None
+    current = chunk.elevation
+    target = storage_dem_resolution(chunk)
+    # Metashape stores resolutions with accumulated rounding (0.0005 comes
+    # back as 0.0005000000000033308), so compare with a margin, not equality.
+    if current.resolution >= target * 0.99:
+        return None
+    return current, target
+
+
+def _resample_prompt(chunk, current, target):
+    """The question asked before deleting a full-resolution DEM."""
+    size = ""
+    try:
+        # Uncompressed float32, so an upper bound; stored tiles are compressed.
+        gb = current.width * current.height * 4 / 1024.0 ** 3
+        size = " The full-resolution copy takes up to about {:.1f} GB.".format(gb)
+    except Exception:
+        pass
+    return (
+        "This chunk's DEM is at {cur:.4f} m, finer than the {tgt:.4f} m storage "
+        "resolution ({factor} times the orthomosaic's {ortho:.4f} m). A DEM "
+        "that fine is only needed while the orthomosaic is being built.{size}"
+        "\n\n"
+        "Click OK to rebuild the DEM at {tgt:.4f} m and delete the {cur:.4f} m "
+        "one.\n"
+        "Click Cancel to keep the {cur:.4f} m DEM as it is and carry on with "
+        "the rest of the workflow.".format(
+            cur=current.resolution, tgt=target, factor=DEM_RESAMPLE_FACTOR,
+            ortho=chunk.orthomosaic.resolution, size=size))
 
 
 def remove_elevation_asset(chunk, key, keep_key=None):
@@ -1016,15 +1087,10 @@ def shrink_dem_for_storage(doc, chunk, reporter):
 
     Returns True if a DEM was replaced.
     """
-    if chunk.orthomosaic is None or chunk.elevation is None:
+    plan = dem_shrink_plan(chunk)
+    if plan is None:
         return False
-
-    current = chunk.elevation
-    target = storage_dem_resolution(chunk)
-    # Metashape stores resolutions with accumulated rounding (0.0005 comes
-    # back as 0.0005000000000033308), so compare with a margin, not equality.
-    if current.resolution >= target * 0.99:
-        return False
+    current, target = plan
 
     old_key = current.key
     old_resolution = current.resolution
@@ -1119,6 +1185,22 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     dem_res = 0  # let Metashape choose; the stored DEM is resampled below
     project_name = settings.project_name or "project"
     output_dir = settings.output_dir or os.path.dirname(doc.path or "")
+
+    # An orthomosaic that already exists alongside a DEM finer than the storage
+    # resolution means that DEM is left over -- from an interrupted run, or a
+    # project processed by an older version. Replacing it deletes the original
+    # for good, so ask now, before any work, rather than part way through. A
+    # DEM built during this run is a different matter: it is the normal
+    # pipeline, replaced once the orthomosaic no longer needs it, with no
+    # question asked.
+    resample_dem = True
+    plan = dem_shrink_plan(chunk)
+    if plan is not None:
+        resample_dem = reporter.confirm(
+            "Resample the DEM?", _resample_prompt(chunk, *plan))
+        if not resample_dem:
+            reporter.info(" --- Keeping the {:.4f} m DEM; it will not be "
+                          "resampled or deleted --- ".format(plan[0].resolution))
 
     # ---------------- 1. Align & scale ----------------
 
@@ -1328,7 +1410,7 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
     # Runs whenever an orthomosaic exists, not only on the pass that built it.
     # A run that died between the ortho and this step would otherwise resume
     # past it for good, leaving the full-resolution DEM in the project.
-    if shrink_dem_for_storage(doc, chunk, reporter):
+    if resample_dem and shrink_dem_for_storage(doc, chunk, reporter):
         update_and_save(doc, reporter)
 
     # Skip when a boundary already exists, e.g. copied from a reference chunk
@@ -1356,7 +1438,9 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
             "The plot boundary was derived from photo coverage ({} vertices) "
             "{}. It follows the area actually photographed, so it will not "
             "match the boundary of other timepoints exactly. Check it before "
-            "comparing timepoints.".format(vertices, reason))
+            "comparing timepoints. For a repeat visit, check the orthomosaic "
+            "against the earlier timepoint and use Copy Boundary to bring the "
+            "boundary across.".format(vertices, reason))
         return True
 
     if has_boundary:
@@ -1378,6 +1462,24 @@ def run_workflow(doc, chunk, settings, reporter=None, on_mesh_complete=None):
                 "they enclose no area.")
             # Only worth falling back when something downstream needs it.
             if settings.export_taglab or settings.export_taglab_legacy:
+                # The legacy outputs are for the unmodified TagLab, where
+                # timepoints are compared block against block, so a boundary
+                # that differs between visits is a real problem and not just a
+                # cosmetic one. Ask first; everything expensive is already
+                # built and saved, so stopping here costs nothing.
+                if (settings.export_taglab_legacy and not reporter.confirm(
+                        "No boundary from corner markers",
+                        PHOTO_BOUNDARY_PROMPT)):
+                    update_and_save(doc, reporter)
+                    reporter.info(" --- Stopped before the exports so the "
+                                  "boundary can be fixed --- ")
+                    warnings.append(
+                        "Stopped before the TagLab exports at your request. "
+                        "Everything up to the orthomosaic and DEM is saved. "
+                        "Check the orthomosaic against the previous "
+                        "timepoint, bring the boundary across with Copy "
+                        "Boundary, then run the workflow again.")
+                    return WorkflowResult(STOPPED_FOR_BOUNDARY, warnings, outputs)
                 has_boundary = try_photo_boundary(
                     "because the corner markers were not found")
 

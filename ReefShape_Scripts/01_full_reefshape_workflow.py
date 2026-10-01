@@ -61,6 +61,13 @@ class DialogReporter(reefshape_core.Reporter):
         # goes unresponsive-grey on Windows for the whole of a mesh build.
         QtWidgets.QApplication.processEvents()
 
+    def confirm(self, title, message):
+        reply = QtWidgets.QMessageBox.question(
+            self.dialog, title, message,
+            QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel,
+            QtWidgets.QMessageBox.Ok)
+        return reply == QtWidgets.QMessageBox.Ok
+
 
 class FullWorkflowDlg(QtWidgets.QDialog):
 
@@ -777,6 +784,16 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             Metashape.app.messageBox(str(err))
             print("Script aborted")
             self.setEnabled(True)
+            return
+
+        if result.status == reefshape_core.STOPPED_FOR_BOUNDARY:
+            Metashape.app.messageBox(
+                "Stopped before the TagLab exports, as requested.\n\n"
+                "Everything up to the orthomosaic and DEM is saved. Check the "
+                "orthomosaic against the previous timepoint, bring the "
+                "boundary across with ReefShape > Tools > Copy Boundary, then "
+                "run the full workflow again to finish.")
+            self.close()
             return
 
         if result.status == reefshape_core.STOPPED_FOR_MANUAL_REFERENCING:
