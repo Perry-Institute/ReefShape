@@ -224,6 +224,11 @@ def create_boundary_from_photos(chunk, footprint=None, label="Photo Boundary",
     # position alongside. The shape-CRS (X, Y) is the camera's real horizontal
     # position in world space -- what the boundary must enclose. The local
     # positions are used only to calibrate metres-to-CRS-units below.
+    if chunk.transform is None or chunk.transform.matrix is None:
+        raise BoundaryError(
+            "This chunk has no coordinate transform yet (it has not been "
+            "referenced or scaled), so camera positions cannot be placed on "
+            "the map.")
     transform = chunk.transform.matrix
     shape_crs = chunk.shapes.crs if chunk.shapes else chunk.crs
     positions_crs = []

@@ -271,7 +271,10 @@ class BuildScalebarFileDlg(QtWidgets.QDialog):
 
         rows, skipped, prefix = [], 0, None
         try:
-            with open(path) as handle:
+            # utf-8-sig: a spreadsheet's "CSV UTF-8" export starts with a byte
+            # order mark that would otherwise become part of the first label
+            # prefix and be written back into every line.
+            with open(path, encoding="utf-8-sig", errors="replace") as handle:
                 for line in handle:
                     line = line.strip()
                     if not line:
@@ -315,6 +318,13 @@ class BuildScalebarFileDlg(QtWidgets.QDialog):
         if skipped:
             message += " ({} line{} skipped)".format(
                 skipped, "" if skipped == 1 else "s")
+            # Saving over this file would drop them for good, so say so now
+            # rather than only in the console.
+            Metashape.app.messageBox(
+                "{} line{} in that file could not be read as a scalebar (a "
+                "header, a comment, or a marker label without a number) and "
+                "will not be kept if you save over the file.".format(
+                    skipped, "" if skipped == 1 else "s"))
         print(message)
         self._refresh()
 

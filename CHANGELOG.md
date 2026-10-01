@@ -1,5 +1,24 @@
 # 🪸 CHANGELOG – ReefShape
 
+## [Unreleased] – after v1.3
+
+### ✨ New
+✅ **ReefShape Batch**: a standalone program for processing many plots in one queue, with new-plot and re-photography jobs (marker or ICP alignment), settings templates, folder scanning, several jobs at once, live progress and logs, retry from the last completed stage, and `.rsbatch` files. See the README.
+✅ **Shared processing package** (`reefshape_modules`): the workflow, timepoint alignment, boundary and ICP code now live in one package used by both the menu scripts and the batch program, so the two cannot drift apart. (Named `reefshape_modules`, not `modules`, because Metashape ships its own `modules` package.)
+✅ **Boundary from the convex hull of the georeferenced markers**, with options for photo coverage or no boundary (which disables TagLab outputs); `Create Boundary from Markers` now has a marker list and plan view.
+✅ **TagLab outputs (legacy)** for unmodified TagLab, and a TagLab project file for the modified version.
+✅ **New tools**: Export Compressed DEM, Build Scalebar File.
+✅ **Default resolution** builds the orthomosaic from the mesh and then the DEM at its own default; a custom resolution stores the DEM at four times the orthomosaic's cell size, and the full-resolution DEM is now actually deleted.
+
+### 🐛 Bug fixes (production-readiness pass)
+✅ **Create New in Project Setup could overwrite the project with an empty chunk**: the dialog kept working on a scratch document after Create New. It now follows the document Metashape has open, and uses the new project's name for output files.
+✅ **Interrupted exports could be mistaken for finished ones**: exports were skipped on re-run whenever the file existed, including a truncated one from a killed run. They are now written under a temporary name and renamed on success.
+✅ **Problems found hours in are now found at the start**: unsaved project, no photos, and georeferencing turned on with a missing georeferencing or scalebar file. No scale is also caught at the default resolution, where it previously was not. Failure to align any photo, an unreachable output folder, and a boundary that cannot be built each give a clear message instead of a bare Metashape error.
+✅ **Georeferencing and scalebar files**: read UTF-8 files with a byte order mark, tolerate a header row in the scalebar file, and report the line and column at fault. The working copy of the georeferencing file now goes to the temp folder, which fixes failures on read-only locations and clashes between jobs sharing a file.
+✅ **Chunk labels with characters Windows cannot use in file names** (`/`, `:`) no longer fail the exports.
+✅ **Batch: a Metashape that could not start left the job running forever**; **cancelling froze the window** and closing the app could leave Metashape processes running; **Cancel in the job editor kept the edits**; **templates overwrote a job's ICP choice** and could switch a marker-aligned revisit into detect-and-reference mode; **jobs saved as running after an app crash were never re-queued**; **retrying a re-photography job with an automatic chunk name added another empty chunk**; **a named job could relabel another timepoint's chunk**; and **reading a project froze the window** with no way to cancel. All fixed.
+✅ **Menu tools**: Copy Boundary never closed after copying and could add a second outer boundary; Add Photos failed on files without an extension; Create Scalebars, Surface Area Ratio, Create Boundary from Photos and ICP alignment now report errors in a message box instead of only the console, and the ratio script restores the original model even if it fails.
+
 ## [v1.3] – June 2026
 
 ### 🛠 Installer
