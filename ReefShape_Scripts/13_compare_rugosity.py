@@ -22,7 +22,7 @@ Grid alignment: this script requires that the two rugosity rasters
 share the same CRS, dimensions, and geotransform bit-for-bit. That
 happens naturally when you run script 11 or 12 on both chunks with the
 same cell size and the same boundary polygon (e.g., after using
-script 07 to copy the boundary across chunks). If the grids don't
+script 09 to copy the boundary across chunks). If the grids don't
 match, the script errors out and points you at the fix instead of
 silently reprojecting.
 
@@ -151,7 +151,7 @@ def _verify_source_grids_match(new_elev, ref_elev):
             "Grid mismatch: dimensions differ.\n"
             "  new: {}×{} cols×rows\n  ref: {}×{} cols×rows\n"
             "Both rugosity rasters must come from the same boundary "
-            "polygon and cell size. Use script 07 to copy the boundary "
+            "polygon and cell size. Use script 09 to copy the boundary "
             "between chunks before running 11/12.".format(
                 new_elev.width, new_elev.height,
                 ref_elev.width, ref_elev.height))
@@ -168,7 +168,7 @@ def _verify_source_grids_match(new_elev, ref_elev):
                 "Grid mismatch: {} differs.\n"
                 "  new: {}\n  ref: {}\n"
                 "Rugosity rasters were computed with different boundary "
-                "polygons. Use script 07 to copy the boundary between "
+                "polygons. Use script 09 to copy the boundary between "
                 "chunks, then re-run 11/12.".format(attr, n, r))
 
 

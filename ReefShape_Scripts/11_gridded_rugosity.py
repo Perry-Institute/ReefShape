@@ -8,7 +8,7 @@ into the chunk as a labeled DEM ("Rugosity"). Optionally also writes it to
 disk as a GeoTIFF.
 
 Why a single-pass mesh iteration (vs. clip-per-cell):
-  09_calculate_area_ratio.py duplicates and clips the mesh to compute the
+  10_calculate_area_ratio.py duplicates and clips the mesh to compute the
   whole-plot rugosity once. Doing that per 1 m cell would be minutes-to-
   hours of mesh ops. Instead, this script iterates the mesh's triangles
   exactly once. For each triangle:
@@ -812,7 +812,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         if not self.chunk.shapes:
             raise RuntimeError(
                 "Active chunk has no shapes. Create an OuterBoundary polygon "
-                "(see scripts 06 or 08) before running this script.")
+                "(see scripts 07 or 08) before running this script.")
         boundary = next(
             (s for s in self.chunk.shapes
              if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary),
@@ -821,7 +821,7 @@ class GriddedRugosityDlg(QtWidgets.QDialog):
         if boundary is None:
             raise RuntimeError(
                 "No OuterBoundary polygon found in chunk shapes. Create one "
-                "(see scripts 06 or 08) before running this script.")
+                "(see scripts 07 or 08) before running this script.")
 
         save_to_disk = self.checkSaveDisk.isChecked()
         save_stats = save_to_disk and self.checkSaveStats.isChecked()

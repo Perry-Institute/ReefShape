@@ -192,16 +192,16 @@ All scripts install into the **ReefShape** menu in Metashape. The numeric prefix
 | **Align Timepoints (ICP)** | `03_align_chunks_ICP.py` | Registers one chunk onto another by surface matching (tie points or mesh vertices, with optional crop-to-overlap and generalized ICP), for plots without shared markers. Adapted from Agisoft's `align_model_to_model.py`. |
 | **Optimize Cameras and Model** | `04_optimization_process.py` | Removes tie points with reconstruction uncertainty above 25 and projection accuracy above 15, then fits all camera parameters. Already part of the full workflow; useful stand-alone. |
 | **Create Scalebars from Targets** | `05_scale_model.py` | Reads a scalebar file and creates the scalebars for the marker pairs found in the chunk. Tolerates a header row and targets missing from the chunk. |
-| **Build Scalebar File** | `15_build_scalebar_file.py` | Builds or extends a scalebar file. Enter lengths in centimetres and accuracies in millimetres; it writes the metre units the workflow expects, and can set the file as the workflow's default. |
-| **Create Boundary from Markers** | `06_create_boundary.py` | Builds a boundary from markers you pick and order, shown on a plan view. Asks before replacing an existing boundary. |
+| **Build Scalebar File** | `06_build_scalebar_file.py` | Builds or extends a scalebar file. Enter lengths in centimetres and accuracies in millimetres; it writes the metre units the workflow expects, and can set the file as the workflow's default. |
+| **Create Boundary from Markers** | `07_create_boundary.py` | Builds a boundary from markers you pick and order, shown on a plan view. Asks before replacing an existing boundary. |
 | **Create Boundary from Photos** | `08_create_boundary_from_photos.py` | Builds a boundary from the aligned camera positions and the photo footprint (estimated from camera height and field of view, adjustable). Holes are filled and stray cameras ignored. |
-| **Copy Boundary** | `07_copy_boundary.py` | Copies the outer boundary from one chunk to another, asking before replacing one. Keeps outputs pixel-aligned for TagLab. |
-| **Calculate Surface Area Ratio** | `09_calculate_area_ratio.py` | The 3D to 2D surface area ratio (a rugosity measure) inside the outer boundary, in full 3D so underhangs count. Needs a mesh and an outer boundary. |
+| **Copy Boundary** | `09_copy_boundary.py` | Copies the outer boundary from one chunk to another, asking before replacing one. Keeps outputs pixel-aligned for TagLab. |
+| **Calculate Surface Area Ratio** | `10_calculate_area_ratio.py` | The 3D to 2D surface area ratio (a rugosity measure) inside the outer boundary, in full 3D so underhangs count. Needs a mesh and an outer boundary. |
 | **Gridded Rugosity** | `11_gridded_rugosity.py` | Rugosity on a grid (0.25 m to 5 m) inside the boundary, added to the chunk as a labeled DEM and optionally saved as a GeoTIFF. Fast: it measures each triangle once. |
 | **Gridded Rugosity (Exact)** | `12_gridded_rugosity_clip.py` | The same product, but each cell is measured by clipping a copy of the mesh to it, which matches a manual clip-and-measure check exactly. Slower (minutes to tens of minutes). |
 | **Compare Rugosity** | `13_compare_rugosity.py` | The fractional change in rugosity between two timepoints, cell by cell. Both chunks need rugosity rasters on the same grid (same cell size and boundary). |
 | **Export Compressed DEM** | `14_export_compressed_dem.py` | Metashape's Export DEM dialog with LZW compression switched on, for far smaller files. |
-| **Clean Project** | `10_clean_project.py` | Deletes key points, depth maps and orthophotos from the current chunk to shrink the project for long-term storage. Run it once you are happy with the products. |
+| **Clean Project** | `15_clean_project.py` | Deletes key points, depth maps and orthophotos from the current chunk to shrink the project for long-term storage. Run it once you are happy with the products. |
 
 `ui_components.py` and the `reefshape_modules` folder are shared code, not tools. They must stay in the same folder as the scripts. `reefshape_modules` holds the processing core used by both the menu scripts and ReefShape Batch, so the two cannot drift apart.
 

@@ -842,7 +842,7 @@ def create_shape_from_markers(chunk, markers, label="Marker Boundary"):
     """Build an OuterBoundary polygon through `markers`, in the order given.
 
     Order is taken as authoritative -- `hull_order` supplies it for the
-    automatic path, and script 06 supplies the user's own sequence when they
+    automatic path, and script 07 supplies the user's own sequence when they
     want a shape the hull would not produce.
     """
     if not chunk:

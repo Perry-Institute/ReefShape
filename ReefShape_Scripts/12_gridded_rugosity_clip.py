@@ -1078,7 +1078,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
         if not self.chunk.shapes:
             raise RuntimeError(
                 "Active chunk has no shapes. Create an OuterBoundary polygon "
-                "(see scripts 06 or 08) before running this script.")
+                "(see scripts 07 or 08) before running this script.")
         boundary = next(
             (s for s in self.chunk.shapes
              if s.boundary_type == Metashape.Shape.BoundaryType.OuterBoundary),
@@ -1087,7 +1087,7 @@ class GriddedRugosityExactDlg(QtWidgets.QDialog):
         if boundary is None:
             raise RuntimeError(
                 "No OuterBoundary polygon found in chunk shapes. Create one "
-                "(see scripts 06 or 08) before running this script.")
+                "(see scripts 07 or 08) before running this script.")
 
         save_to_disk = self.checkSaveDisk.isChecked()
         save_stats = save_to_disk and self.checkSaveStats.isChecked()

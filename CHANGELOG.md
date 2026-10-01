@@ -12,6 +12,8 @@
 
 ✅ **Scalebar targets that moved during the survey no longer bend the scale**: projections with a pixel error over 10 px are removed from scalebar targets before the mesh is built (with a check that each bar keeps at least three good photos per end and three showing both ends), with a fallback that loosens the accuracy of a bar that cannot be trusted instead of removing it.
 
+✅ **Scripts renumbered to match the menu and README order**: Build Scalebar File is now `06`, Create Boundary from Markers `07`, Copy Boundary `09`, Calculate Surface Area Ratio `10`, and Clean Project `15`. Menu labels are unchanged, and the installers remove the old file names automatically.
+
 ### 🐛 Bug fixes (production-readiness pass)
 ✅ **Create New in Project Setup could overwrite the project with an empty chunk**: the dialog kept working on a scratch document after Create New. It now follows the document Metashape has open, and uses the new project's name for output files.
 ✅ **Interrupted exports could be mistaken for finished ones**: exports were skipped on re-run whenever the file existed, including a truncated one from a killed run. They are now written under a temporary name and renamed on success.
