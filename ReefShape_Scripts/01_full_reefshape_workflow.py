@@ -234,9 +234,15 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         # taglab outputs
         self.checkBoxTagLab = QtWidgets.QCheckBox("Create TagLab Outputs")
         self.checkBoxTagLab.setChecked(True)
-        self.checkBoxTagLab.setToolTip("TagLab requires image inputs to have certain size and compression parameters"
-                                       "\n\nIf this option is checked, a second set of outputs will be created for TagLab analysis that are cropped to the boundary polygon and broken into blocks if needed")
+        self.checkBoxTagLab.setToolTip("For the modified version of TagLab that accepts large, JPEG-compressed images."
+                                       "\n\nIf this option is checked, a second set of outputs will be created for TagLab analysis that are cropped to the boundary polygon, as single files, along with a TagLab project file."
+                                       "\n\nUse the legacy option instead for the standard, unmodified TagLab.")
         self.checkBoxTagLab.setChecked(True)
+
+        # taglab outputs for the unmodified program
+        self.checkBoxTagLabLegacy = QtWidgets.QCheckBox("Create TagLab Outputs (Legacy)")
+        self.checkBoxTagLabLegacy.setChecked(False)
+        self.checkBoxTagLabLegacy.setToolTip("For the standard, unmodified version of TagLab, which cannot open large or JPEG-compressed images.\n\nWritten to a separate taglab_outputs_legacy folder: LZW-compressed, split into blocks of at most 32767 px, with the DEM at the orthomosaic's resolution so the two line up. The files are much larger than the standard TagLab outputs, and no TagLab project file is written.\n\nNeeds a boundary polygon, like the standard TagLab outputs.")
 
         # run script button
         self.btnOk = QtWidgets.QPushButton("Ok")
@@ -289,6 +295,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         export_layout.addWidget(self.checkBoxReport)
         export_layout.addWidget(self.checkBoxExport)
         export_layout.addWidget(self.checkBoxTagLab)
+        export_layout.addWidget(self.checkBoxTagLabLegacy)
 
         ok_layout = QtWidgets.QHBoxLayout()
         ok_layout.addWidget(self.btnOk)
@@ -663,6 +670,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.comboMeshQuality.setCurrentIndex(self.settings.value("comboMeshQuality", 2, type=int))
         self.checkBoxExport.setChecked(self.settings.value("checkBoxExport", True, type=bool))
         self.checkBoxTagLab.setChecked(self.settings.value("checkBoxTagLab", False, type=bool))
+        self.checkBoxTagLabLegacy.setChecked(self.settings.value("checkBoxTagLabLegacy", False, type=bool))
         self.checkBoxReport.setChecked(self.settings.value("checkBoxExportReport", True, type=bool))
         self.checkBoxVertexColors.setChecked(self.settings.value("checkBoxVertexColors", False, type=bool))
         self.comboBoundary.setCurrentIndex(self.settings.value("comboBoundary", 0, type=int))
@@ -694,6 +702,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
         self.settings.setValue("comboMeshQuality", self.comboMeshQuality.currentIndex())
         self.settings.setValue("checkBoxExport", self.checkBoxExport.isChecked())
         self.settings.setValue("checkBoxTagLab", self.checkBoxTagLab.isChecked())
+        self.settings.setValue("checkBoxTagLabLegacy", self.checkBoxTagLabLegacy.isChecked())
         self.settings.setValue("checkBoxExportReport", self.checkBoxReport.isChecked())
         self.settings.setValue("checkBoxVertexColors", self.checkBoxVertexColors.isChecked())
         self.settings.setValue("comboBoundary", self.comboBoundary.currentIndex())
@@ -831,6 +840,7 @@ class FullWorkflowDlg(QtWidgets.QDialog):
             export_report=self.checkBoxReport.isChecked(),
             export_gis=self.checkBoxExport.isChecked(),
             export_taglab=self.checkBoxTagLab.isChecked(),
+            export_taglab_legacy=self.checkBoxTagLabLegacy.isChecked(),
             project_name=self.project_name,
         )
 

@@ -34,7 +34,8 @@ DATE_FOLDER = re.compile(r"^\d{8}$")
 
 # Folders that are outputs, not inputs. Scanning these in would create jobs
 # pointed at a previous run's exports.
-IGNORED = {"taglab_outputs", "exports", "outputs", "reports"}
+IGNORED = {"taglab_outputs", "taglab_outputs_legacy", "exports", "outputs",
+           "reports"}
 
 # How many folders deep to look for photos, counting the plot folder as one.
 # The usual layout is Plot/YYYYMMDD/JPEG (three); the rest is headroom. The cap

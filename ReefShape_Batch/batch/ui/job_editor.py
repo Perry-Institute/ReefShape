@@ -526,7 +526,12 @@ class JobEditor(QtWidgets.QDialog):
         self.taglab_check.setToolTip(
             "Requires a boundary polygon. If none can be created, these are "
             "skipped with a warning and the rest of the outputs still run.")
-        for box in (self.report_check, self.gis_check, self.taglab_check):
+        self.taglab_legacy_check = QtWidgets.QCheckBox(
+            "TagLab outputs (legacy, for unmodified TagLab)")
+        self.taglab_legacy_check.setToolTip(
+            "For the standard, unmodified version of TagLab, which cannot open large or JPEG-compressed images.\n\nWritten to a separate taglab_outputs_legacy folder: LZW-compressed, split into blocks of at most 32767 px, with the DEM at the orthomosaic's resolution so the two line up. The files are much larger than the standard TagLab outputs, and no TagLab project file is written.\n\nNeeds a boundary polygon, like the standard TagLab outputs.")
+        for box in (self.report_check, self.gis_check, self.taglab_check,
+                    self.taglab_legacy_check):
             layout.addWidget(box)
 
     # -- data in and out --
@@ -567,6 +572,7 @@ class JobEditor(QtWidgets.QDialog):
         self.report_check.setChecked(job.export.report)
         self.gis_check.setChecked(job.export.gis_outputs)
         self.taglab_check.setChecked(job.export.taglab_outputs)
+        self.taglab_legacy_check.setChecked(job.export.taglab_legacy_outputs)
 
         if job.kind == REPHOTO:
             self.icp_check.setChecked(job.icp.enabled)
@@ -663,6 +669,7 @@ class JobEditor(QtWidgets.QDialog):
         job.export.report = self.report_check.isChecked()
         job.export.gis_outputs = self.gis_check.isChecked()
         job.export.taglab_outputs = self.taglab_check.isChecked()
+        job.export.taglab_legacy_outputs = self.taglab_legacy_check.isChecked()
 
         if job.kind == REPHOTO:
             job.reference_chunk = self.ref_combo.currentText()

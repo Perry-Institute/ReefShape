@@ -189,11 +189,17 @@ class ExportSettings:
     are only useful clipped to the plot, so without a boundary they are
     skipped with a warning rather than exported uncropped. The rest of the
     run still completes.
+
+    `taglab_legacy_outputs` is the same products for the standard, unmodified
+    TagLab -- LZW, split into 32767 px blocks, DEM on the orthomosaic's grid --
+    in a separate folder. Off by default; it can be combined with the standard
+    outputs, and has the same boundary requirement.
     """
     output_dir: str = ""
     report: bool = True
     gis_outputs: bool = True
     taglab_outputs: bool = True
+    taglab_legacy_outputs: bool = False
 
 
 @dataclass
@@ -581,10 +587,11 @@ def validate_job(job: Job) -> List[Issue]:
     # -- exports --
     if job.export.output_dir and not os.path.isdir(job.export.output_dir):
         err("Output folder does not exist: {}".format(job.export.output_dir))
-    if not (job.export.report or job.export.gis_outputs or job.export.taglab_outputs):
+    if not (job.export.report or job.export.gis_outputs
+            or job.export.taglab_outputs or job.export.taglab_legacy_outputs):
         warn("No outputs selected: the project will be processed but nothing "
              "will be exported.")
-    if job.export.taglab_outputs:
+    if job.export.taglab_outputs or job.export.taglab_legacy_outputs:
         if job.processing.boundary_source == BOUNDARY_NONE:
             warn("TagLab outputs need a boundary polygon to clip to, and "
                  "boundary creation is turned off. They will be skipped.")
