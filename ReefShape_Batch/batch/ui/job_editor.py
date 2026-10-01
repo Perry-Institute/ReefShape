@@ -499,6 +499,8 @@ class JobEditor(QtWidgets.QDialog):
         row = QtWidgets.QHBoxLayout()
         self.default_res_check = QtWidgets.QCheckBox(
             "Let Metashape choose the orthomosaic resolution")
+        self.default_res_check.setToolTip(
+            "Let Metashape choose the orthomosaic's resolution, from the ground sampling distance of the images.\n\nThe DEM is first built at a matching resolution, so the orthomosaic is not resampled from a coarser surface, and is replaced at the end by the DEM resolution Metashape picks for the mesh, which is much coarser.\n\nWith a custom resolution the stored DEM is instead four times the orthomosaic's pixel size.")
         self.res_spin = QtWidgets.QDoubleSpinBox()
         self.res_spin.setDecimals(5)
         self.res_spin.setSingleStep(0.0001)
